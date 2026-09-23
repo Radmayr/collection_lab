@@ -36,6 +36,20 @@ LGBM_UNIVARIATE_PARAMS: dict[str, Any] = {
     "verbosity": -1,
 }
 
+# Модель для пошаговой оценки наборов признаков (incremental_feature_eval).
+LGBM_INCREMENTAL_PARAMS: dict[str, Any] = {
+    "n_estimators": 1000,
+    "learning_rate": 0.05,
+    "num_leaves": 31,
+    "min_child_samples": 20,
+    "colsample_bytree": 0.9,
+    "subsample": 0.9,
+    "subsample_freq": 1,
+    "random_state": RANDOM_STATE,
+    "n_jobs": 1,
+    "verbosity": -1,
+}
+
 CATBOOST_PARAMS: dict[str, Any] = {
     "iterations": 5000,
     "learning_rate": 0.03,
