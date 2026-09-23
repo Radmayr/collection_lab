@@ -107,6 +107,14 @@ def psi_table(expected, actual, bins: int = 10, categorical: bool | None = None)
     return table.reset_index()
 
 
+def psi_from_counts(expected_counts: pd.Series, actual_counts: pd.Series) -> float:
+    """PSI по готовым счётчикам бинов (индекс — бин). Отсутствующий бин получает count = 1."""
+    table = pd.concat([expected_counts.rename("e"), actual_counts.rename("a")], axis=1).fillna(1)
+    e = table["e"] / expected_counts.sum()
+    a = table["a"] / actual_counts.sum()
+    return float(((a - e) * np.log(a / e)).sum())
+
+
 def psi(expected, actual, bins: int = 10, categorical: bool | None = None) -> float:
     """PSI между двумя выборками (см. :func:`psi_table`)."""
     if len(expected) == 0 or len(actual) == 0:

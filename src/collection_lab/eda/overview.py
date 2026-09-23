@@ -60,7 +60,9 @@ def overview(df: pd.DataFrame, columns: Iterable[str] | None = None) -> pd.DataF
     return out
 
 
-def target_summary(df: pd.DataFrame, target: str, by: str | list[str] | None = None) -> pd.DataFrame:
+def target_summary(
+    df: pd.DataFrame, target: str, by: str | list[str] | None = None
+) -> pd.DataFrame:
     """Размер выборки, число и доля таргета — всего или в разрезе ``by``."""
     if by is None:
         return pd.DataFrame({"n": [len(df)], "n_target": [df[target].sum()],
