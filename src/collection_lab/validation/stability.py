@@ -2,8 +2,8 @@
 
 Две фигуры по две панели:
 
-1. WoE по бакетам от времени (+ доверительный интервал) | распределение по бакетам;
-2. Bad rate по бакетам от времени (+ ДИ) | IV от времени.
+1. WoE по бакетам от времени (± 1 стандартная ошибка) | распределение по бакетам;
+2. Bad rate по бакетам от времени (± 1 стандартная ошибка) | IV от времени.
 
 Бакеты строятся один раз по всей выборке (:func:`~collection_lab.metrics.binning.
 quantile_buckets` — одинаковые значения не разрываются), подписи — ``'var in [min, max]'``,
@@ -23,7 +23,6 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from scipy.stats import norm
 
 from collection_lab.metrics.binning import (
     bucket_labels,
@@ -37,7 +36,9 @@ from collection_lab.metrics.classification import roc_auc
 from collection_lab.metrics.stability import psi_from_counts
 from collection_lab.plotting.theme import PALETTE
 
-Z_99 = float(norm.ppf(0.995))
+# Полосы на графиках plot_stab — ±1 стандартная ошибка (сверено с выводом исходной функции:
+# WoE и badrate совпадают, ширина полос соответствует z ≈ 1).
+Z_STAB = 1.0
 
 
 def _hex_rgba(hex_color: str, alpha: float) -> str:
@@ -123,8 +124,8 @@ def stability_table(
             if not avoid_null_mode:  # без подстановки: бакеты с нулевыми счётчиками → NaN
                 bad0 = (wt["bad"] == 0) | (wt["good"] == 0)
                 wt.loc[bad0, ["woe", "iv"]] = np.nan
-            wt["woe_ci"] = woe_ci(wt["bad"], wt["good"])
-            wt["bad_rate_ci"] = Z_99 * np.sqrt(wt["bad_rate"] * (1 - wt["bad_rate"]) / wt["n"])
+            wt["woe_ci"] = woe_ci(wt["bad"], wt["good"], z=Z_STAB)
+            wt["bad_rate_ci"] = Z_STAB * np.sqrt(wt["bad_rate"] * (1 - wt["bad_rate"]) / wt["n"])
             wt["share"] = wt["n"] / n_p
             wt["period"] = p
             rows.append(wt)
@@ -296,7 +297,9 @@ def plot_stab(
             x = pd.Timestamp(dt).timestamp() * 1000  # plotly ждёт миллисекунды для дат
             fig.add_vline(x=x, line_dash="dash", line_color="black",
                           annotation_text=text or "", annotation_position="top")
-        fig.update_xaxes(tickangle=-45, tickformat="%b %-d, %Y")
+        n_periods = periods["period"].nunique()
+        fig.update_xaxes(tickangle=-45, tickformat="%b %-d, %Y",
+                         tickvals=periods["period"] if n_periods <= 36 else None)
         fig.update_layout(height=500, width=1500, hovermode="closest",
                           legend={"x": -0.25, "y": 1, "bordercolor": "black", "borderwidth": 1,
                                   "traceorder": "normal"},

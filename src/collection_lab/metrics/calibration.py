@@ -128,21 +128,20 @@ def _add_group_traces(fig, t: pd.DataFrame, row: int, col: int, calib: bool, cal
     common = {"row": row, "col": col}
     fig.add_scatter(x=x, y=t["pred"], name="Model Prediction", legendgroup="group1",
                     showlegend=first, hovertemplate="%{y:.4f}", line={"color": "#EF553B"},
-                    line_shape="spline",
                     marker={"color": "#EF553B", "size": 5, "line": {"color": "black", "width": 1}},
                     **common)
     fig.add_bar(x=x, y=t["badrate"], name="Badrate", legendgroup="group2", showlegend=first,
                 hovertemplate="%{y:.4f}", marker_color="#636EFA", **common)
     if calib:
         fig.add_scatter(x=x, y=t["calibrated"], name="Calibrated Model", legendgroup="group3",
-                        showlegend=first, hovertemplate="%{y:.4f}", line_shape="spline",
+                        showlegend=first, hovertemplate="%{y:.4f}",
                         line={"color": "#00CC96"},
                         marker={"color": "#00CC96", "size": 5,
                                 "line": {"color": "black", "width": 1}}, **common)
     if calib_full:
         fig.add_scatter(x=x, y=t["full_calibrated"], name="Full Calibrated Model",
                         legendgroup="group4", showlegend=first, hovertemplate="%{y:.4f}",
-                        line_shape="spline", line={"color": "#AB63FA"},
+                        line={"color": "#AB63FA"},
                         marker={"color": "#AB63FA", "size": 5,
                                 "line": {"color": "black", "width": 1}}, **common)
     fig.add_scatter(x=x, y=t["badrate"], mode="markers", name="Confidence Interval",

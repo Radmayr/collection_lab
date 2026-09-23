@@ -24,3 +24,6 @@ catboost_info/
 # IDE
 .vscode/
 .idea/
+
+# выполненный пример содержит статистики рабочих данных — только локально
+examples/*_executed.ipynb
