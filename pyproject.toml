@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "collection_lab"
+dynamic = ["version"]
+description = "Инструменты для разработки, отбора признаков и валидации ML-моделей"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Radmuire" }]
+dependencies = [
+    "numpy>=1.23",
+    "pandas>=1.5",
+    "scipy>=1.9",
+    "scikit-learn>=1.2",
+    "lightgbm>=4.0",
+    "plotly>=5.15",
+    "joblib>=1.2",
+    "tqdm>=4.64",
+]
+
+[project.optional-dependencies]
+catboost = ["catboost>=1.2"]
+optuna = ["optuna>=3.0"]
+clearml = ["clearml>=1.14"]
+all = ["collection_lab[catboost,optuna,clearml]"]
+dev = [
+    "collection_lab[all]",
+    "pytest>=7.0",
+    "ruff>=0.5",
+    "nbformat>=5.0",
+    "ipykernel",
+]
+
+[tool.setuptools.dynamic]
+version = { attr = "collection_lab.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: долгие тесты на реальных данных (запуск: pytest -m slow)",
+]
+addopts = "-m 'not slow'"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "NPY", "PD"]

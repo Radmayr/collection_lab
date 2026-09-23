@@ -1,0 +1,26 @@
+# окружение
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# инструменты
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# данные и артефакты экспериментов — не в git
+data/
+*.csv
+*.xlsx
+*.parquet
+*.pkl
+*.joblib
+experiments/
+catboost_info/
+
+# IDE
+.vscode/
+.idea/
