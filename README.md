@@ -60,6 +60,11 @@ with cl.tracking.Experiment("RTK_model", clearml=True) as exp:
 > Внутри активного `Experiment(clearml=True)` то же делают `.save(dir)` у `Result`,
 > `SelectionPipeline`, `ModelReport` (`to_clearml=False` — только диск). Что произошло с каждым
 > графиком — `exp.plots_summary()` и итоговая строка при `close()`.
+>
+> Чтобы графики, которые вы строите и просто смотрите в ноутбуке (`pipe.plot()`, `fwd.plot()`,
+> `plot_stab(...)`, `gain_chart(...)`), тоже попадали в ClearML, создайте
+> `Experiment(..., clearml=True, capture_plots=True)`. Создавайте **один** `Experiment` на запуск и
+> не вызывайте `Experiment(...)` повторно внутри `with ... as exp:`.
 
 Полный пример на реальных данных — [examples/rtk_pipeline.ipynb](examples/rtk_pipeline.ipynb).
 
