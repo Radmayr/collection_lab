@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-from collection_lab.plotting.theme import NEGATIVE, style
+from collection_lab.plotting.theme import NEGATIVE, histogram, style
 
 
 def plot_distribution(
@@ -36,7 +36,7 @@ def plot_distribution(
     go.Figure
         В заголовке — mean / median / std / skew обрезанных данных.
     """
-    s = data[col] if isinstance(data, pd.DataFrame) else data
+    s = data[col] if isinstance(data, pd.DataFrame) else pd.Series(data)
     name = col or s.name or "value"
     s = pd.to_numeric(s, errors="coerce").dropna()
     if s.empty:
@@ -53,8 +53,7 @@ def plot_distribution(
     clipped = s.clip(lo, hi)
     stats = (f"μ={clipped.mean():.3f} | медиана={clipped.median():.3f} | "
              f"σ={clipped.std():.3f} | skew={clipped.skew():.2f}")
-    fig = go.Figure(go.Histogram(x=clipped, nbinsx=bins, marker_line={"width": 0.5,
-                                                                       "color": "white"}))
+    fig = go.Figure(histogram(clipped, bins, marker_line={"width": 0.5, "color": "white"}))
     if not force_log:
         for v in (lo, hi):
             fig.add_vline(x=v, line_dash="dot", line_color=NEGATIVE)

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import re
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -103,6 +104,7 @@ class Experiment:
                                      "created": datetime.now().isoformat(timespec="seconds"),
                                      "params": {}, "metrics": {}}
         self.task = None
+        self._watch = None
         if clearml:
             # сначала ClearML: при ошибке не остаётся пустой локальной папки версии
             previous = cml.close_current_task()
@@ -111,6 +113,8 @@ class Experiment:
                       f"(одна активная задача на процесс)")
             self.task = cml.init_task(project, name or f"v_{self.version}", tags=tags,
                                       offline=clearml_offline)
+            cml.reset_reported_plots()
+            self._watch = cml.ErrorWatch().start()  # ошибки ClearML в фоне: покажем при close()
         self.models_path.mkdir(parents=True, exist_ok=True)
         self.logs_path.mkdir(parents=True, exist_ok=True)
         self._dump_meta()
@@ -202,8 +206,9 @@ class Experiment:
         if result.plotter is not None:
             try:
                 self.save_figure(result.plot(), prefix)
-            except Exception:  # noqa: BLE001 — график необязателен
-                pass
+            except Exception as e:  # noqa: BLE001 — график необязателен, но ошибку показываем
+                warnings.warn(f"График результата {prefix!r} не сохранён: "
+                              f"{type(e).__name__}: {e}", RuntimeWarning, stacklevel=2)
         return self.logs_path
 
     def save_figure(self, fig, name: str) -> Path:
@@ -213,8 +218,28 @@ class Experiment:
         cml.report_figure(fig, title=name)
         return path
 
-    def close(self) -> None:
-        """Завершить задачу ClearML (локальные файлы уже сохранены). Можно вызывать повторно."""
+    def flush(self) -> None:
+        """Дождаться отправки накопленных событий в ClearML."""
         if self.task is not None:
-            self.task.close()
-            self.task = None
+            self.task.flush(wait_for_uploads=True)
+
+    def close(self, verify: bool = True) -> None:
+        """Завершить задачу ClearML (локальные файлы уже сохранены). Можно вызывать повторно.
+
+        Перед закрытием дожидается отправки и (``verify=True``, не офлайн) сверяет с сервером,
+        все ли графики дошли: недошедшие и ошибки ClearML выводятся предупреждением.
+        """
+        if self.task is None:
+            return
+        missing = cml.verify_plots() if verify else []
+        if missing:
+            warnings.warn(
+                "В ClearML не дошли графики: " + ", ".join(missing) + ". Обычно сервер отклоняет "
+                "слишком большие запросы. Диагностика: collection_lab.tracking.clearml.diagnose()",
+                RuntimeWarning, stacklevel=2)
+        self.task.close()
+        self.task = None
+        if self._watch is not None:
+            self._watch.stop()
+            self._watch.warn()
+            self._watch = None

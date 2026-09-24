@@ -21,7 +21,7 @@
     report = cl.validation.model_report(model, split, date_col="rtk_send_date")
 """
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 from collection_lab import (  # noqa: E402
     core,

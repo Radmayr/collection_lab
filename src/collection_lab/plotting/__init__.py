@@ -8,8 +8,11 @@ from collection_lab.plotting.theme import (
     bar_colors,
     color,
     combine,
+    figure_size_mb,
+    histogram,
+    shrink_figure,
     style,
 )
 
 __all__ = ["NEGATIVE", "PALETTE", "POSITIVE", "TEMPLATE", "bar_colors", "color", "combine",
-           "style"]
+           "figure_size_mb", "histogram", "shrink_figure", "style"]

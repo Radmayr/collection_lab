@@ -9,7 +9,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from collection_lab.plotting.theme import color, style
+from collection_lab.plotting.theme import color, histogram, style
 
 MILESTONES = [(30, "1м"), (90, "3м"), (180, "6м"), (365, "12м"), (730, "24м"), (1095, "36м")]
 
@@ -262,8 +262,8 @@ def eda_transactions(
     figures: dict[str, go.Figure] = {}
     fig = make_subplots(rows=1, cols=2, subplot_titles=(
         "Баланс клиентов", "Баланс клиентов (log10, > 0)"))
-    fig.add_histogram(x=balance.dropna(), nbinsx=60, row=1, col=1)
-    fig.add_histogram(x=np.log10(balance[balance > 0]), nbinsx=60, row=1, col=2)
+    fig.add_trace(histogram(balance.dropna(), 60), row=1, col=1)
+    fig.add_trace(histogram(np.log10(balance[balance > 0]), 60), row=1, col=2)
     figures["balance"] = style(fig, "Распределение балансов", height=380).update_layout(
         showlegend=False)
 
@@ -271,14 +271,14 @@ def eda_transactions(
     lo, hi = t.quantile([0.01, 0.99])
     fig = make_subplots(rows=1, cols=2, subplot_titles=(
         "Сумма транзакции (1–99%)", "|Сумма транзакции| (log10)"))
-    fig.add_histogram(x=t.clip(lo, hi), nbinsx=80, row=1, col=1)
-    fig.add_histogram(x=np.log10(t.abs()[t.abs() > 0]), nbinsx=80, row=1, col=2)
+    fig.add_trace(histogram(t.clip(lo, hi), 80), row=1, col=1)
+    fig.add_trace(histogram(np.log10(t.abs()[t.abs() > 0]), 80), row=1, col=2)
     figures["tx_amount"] = style(fig, "Распределение сумм транзакций", height=380).update_layout(
         showlegend=False)
 
     cnt = per_client["tx_cnt"]
     figures["tx_per_client"] = style(
-        go.Figure(go.Histogram(x=cnt.clip(upper=cnt.quantile(0.99)), nbinsx=60)),
+        go.Figure(histogram(cnt.clip(upper=cnt.quantile(0.99)), 60)),
         "Транзакций на клиента (до 99%)", height=350)
 
     if tx_days_col in df.columns:
@@ -288,7 +288,7 @@ def eda_transactions(
             lambda s: s.abs().sum())
         fig = make_subplots(rows=1, cols=2, subplot_titles=(
             "Транзакций по дням от ретро-даты", "|Оборот| по дням от ретро-даты"))
-        fig.add_histogram(x=d, nbinsx=60, row=1, col=1)
+        fig.add_trace(histogram(d, 60), row=1, col=1)
         fig.add_scatter(x=by_day.index, y=by_day.values, mode="lines", row=1, col=2)
         figures["activity_by_day"] = style(fig, "Активность после ретро-даты",
                                            height=380).update_layout(showlegend=False)

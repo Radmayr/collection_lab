@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -85,3 +87,56 @@ def combine(
 def bar_colors(values) -> list[str]:
     """Зелёный для неотрицательных, красный для отрицательных значений."""
     return [NEGATIVE if (v is not None and v < 0) else POSITIVE for v in values]
+
+
+def histogram(x, bins: int = 100, *, name: str | None = None, **kwargs) -> go.Bar:
+    """Гистограмма с предподсчитанными бинами (``go.Bar``).
+
+    В отличие от ``go.Histogram`` в фигуру попадают только счётчики бинов, а не все значения:
+    размер фигуры не зависит от числа строк (важно для HTML-отчётов и ClearML, где сервер
+    отбрасывает слишком большие графики).
+    """
+    x = np.asarray(x, dtype="float64")
+    x = x[~np.isnan(x)]
+    counts, edges = np.histogram(x, bins=bins)
+    centers = (edges[:-1] + edges[1:]) / 2
+    return go.Bar(
+        x=centers, y=counts, width=np.diff(edges), name=name,
+        customdata=np.stack([edges[:-1], edges[1:]], axis=-1),
+        hovertemplate="[%{customdata[0]:.4g}; %{customdata[1]:.4g}): %{y}<extra></extra>",
+        **kwargs,
+    )
+
+
+def _jsonable(o):
+    return o.tolist() if hasattr(o, "tolist") else str(o)
+
+
+def figure_size_mb(fig: go.Figure) -> float:
+    """Размер фигуры в МБ в том виде, в котором она уходит в plotly/ClearML (JSON)."""
+    return len(json.dumps(fig.to_plotly_json(), default=_jsonable)) / 1e6
+
+
+_ARRAY_ATTRS = ("x", "y", "customdata", "text", "hovertext")
+
+
+def shrink_figure(fig: go.Figure, max_points: int) -> go.Figure:
+    """Копия фигуры, в которой длинные массивы точек (x, y, customdata, text) равномерно
+    прорежены до ``max_points``. Агрегированные графики (бары, линии по периодам) не меняются.
+    """
+    out = go.Figure(fig)
+    for trace in out.data:
+        length = None
+        for attr in ("x", "y"):
+            v = getattr(trace, attr, None)
+            if v is not None and hasattr(v, "__len__") and not isinstance(v, str):
+                length = max(length or 0, len(v))
+        if not length or length <= max_points:
+            continue
+        idx = np.linspace(0, length - 1, max_points).astype(int)
+        for attr in _ARRAY_ATTRS:
+            v = getattr(trace, attr, None)
+            if v is not None and hasattr(v, "__len__") and not isinstance(v, str) \
+                    and len(v) == length:
+                trace[attr] = np.asarray(v)[idx]
+    return out
