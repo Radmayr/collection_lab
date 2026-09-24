@@ -2,6 +2,7 @@
 
 import logging
 import warnings
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -30,8 +31,10 @@ class FakeLogger:
 class FakeTask:
     """Имитация задачи ClearML: сервер «получает» только графики из ``delivered``."""
 
-    def __init__(self, delivered=None):
+    def __init__(self, delivered=None, truncated_readback=False, metrics_api_fails=False):
         self.name, self.id = "v_1", "fake"
+        self.truncated_readback = truncated_readback
+        self.metrics_api_fails = metrics_api_fails
         self.logger = FakeLogger()
         self.delivered = delivered
         self.closed = False
@@ -44,9 +47,22 @@ class FakeTask:
     def flush(self, wait_for_uploads=False):
         self.flushed += 1
 
+    def _on_server(self):
+        return self.delivered if self.delivered is not None else [t for t, _ in
+                                                                  self.logger.reported]
+
+    def send(self, request):
+        """Список метрик с графиками — не зависит от размера графиков."""
+        if self.metrics_api_fails:
+            raise RuntimeError("старый сервер: event_type не поддерживается")
+        return SimpleNamespace(response=SimpleNamespace(
+            metrics=[{"task": self.id, "metrics": list(self._on_server())}]))
+
     def get_reported_plots(self, max_iterations=None):
-        titles = self.delivered if self.delivered is not None else [t for t, _ in
-                                                                    self.logger.reported]
+        """Чтение самих графиков: у сервера ответ ограничен по размеру (крупные не попадают)."""
+        titles = list(self._on_server())
+        if self.truncated_readback:
+            titles = titles[:1]
         return [{"metric": t} for t in titles]
 
     def close(self):
@@ -57,8 +73,8 @@ class FakeTask:
 def fake_clearml(monkeypatch):
     holder = {}
 
-    def install(delivered=None):
-        task = FakeTask(delivered)
+    def install(delivered=None, **kwargs):
+        task = FakeTask(delivered, **kwargs)
         holder["task"] = task
         def init(*a, **k):
             task.active = True
@@ -180,3 +196,33 @@ def test_save_result_warns_when_plot_fails(tmp_path):
 def test_verify_plots_without_task_or_offline(monkeypatch):
     monkeypatch.setattr(cml, "current_task", lambda: None)
     assert cml.verify_plots(["x"]) == []
+
+
+def test_verify_uses_metrics_listing_not_truncated_plot_readback(tmp_path, fake_clearml):
+    """Ложная тревога с ML Core: get_reported_plots отдавал только часть графиков."""
+    fake_clearml(truncated_readback=True)                       # readback видит только первый
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)          # любое предупреждение = провал
+        with Experiment("p", root=tmp_path, clearml=True) as exp:
+            for name in ("a", "b", "c"):
+                exp.save_figure(go.Figure(go.Scatter(y=[1, 2])), name)
+
+
+def test_verify_silent_when_server_cannot_be_checked(tmp_path, fake_clearml):
+    fake_clearml(delivered=[], metrics_api_fails=True)          # проверить нельзя → не тревожим
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        with Experiment("p", root=tmp_path, clearml=True) as exp:
+            exp.save_figure(go.Figure(go.Scatter(y=[1, 2])), "a")
+
+
+def test_paused_error_watch_ignores_errors():
+    watch = cml.ErrorWatch().start()
+    try:
+        watch.paused = True
+        logging.getLogger("clearml.session").error("намеренная ошибка диагностики")
+        watch.paused = False
+        logging.getLogger("clearml.session").error("настоящая ошибка")
+    finally:
+        watch.stop()
+    assert watch.messages == ["настоящая ошибка"]

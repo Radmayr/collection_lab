@@ -109,6 +109,9 @@ def _logger():
     return None if task is None else task.get_logger()
 
 
+_WATCHES: list[ErrorWatch] = []  # активные наблюдатели (их ставит на паузу diagnose)
+
+
 # --- перехват ошибок ClearML ---------------------------------------------------------------
 class ErrorWatch(logging.Handler):
     """Копит сообщения уровня ERROR из логгеров ClearML (например, «request exceeds limit»).
@@ -120,9 +123,12 @@ class ErrorWatch(logging.Handler):
     def __init__(self) -> None:
         super().__init__(level=logging.ERROR)
         self.messages: list[str] = []
+        self.paused = False
         self._logger = logging.getLogger("clearml")
 
     def emit(self, record: logging.LogRecord) -> None:
+        if self.paused:
+            return
         try:
             msg = record.getMessage()
         except Exception:  # noqa: BLE001
@@ -133,10 +139,14 @@ class ErrorWatch(logging.Handler):
     def start(self) -> ErrorWatch:
         if self not in self._logger.handlers:
             self._logger.addHandler(self)
+        if self not in _WATCHES:
+            _WATCHES.append(self)
         return self
 
     def stop(self) -> None:
         self._logger.removeHandler(self)
+        if self in _WATCHES:
+            _WATCHES.remove(self)
 
     def warn(self) -> None:
         if not self.messages:
@@ -248,14 +258,32 @@ def upload_artifact(name: str, obj: Any) -> bool:
 
 
 # --- проверка доставки и диагностика ---------------------------------------------------------
-def _server_plot_titles(task) -> set[str]:
-    return {p["metric"] for p in task.get_reported_plots(max_iterations=5)}
+def _server_plot_titles(task) -> set[str] | None:
+    """Названия графиков, которые есть на сервере, или ``None``, если это узнать нельзя.
+
+    Используется список метрик с событиями типа plot — он не зависит от размера графиков.
+    Чтение самих графиков (``get_reported_plots``) для проверки не годится: сервер отдаёт его
+    страницами, ограниченными по размеру, и крупные графики в ответ не попадают, хотя сохранены.
+    """
+    try:
+        from clearml.backend_api.services import events
+
+        response = task.send(events.GetTaskMetricsRequest(tasks=[task.id], event_type="plot"))
+        titles: set[str] = set()
+        for item in response.response.metrics:
+            for m in item["metrics"]:
+                titles.add(m if isinstance(m, str) else (m["metric"] if isinstance(m, dict)
+                                                         else m.metric))
+        return titles
+    except Exception:  # noqa: BLE001 — старый сервер/SDK: проверить нельзя, но и не тревожим
+        return None
 
 
 def verify_plots(expected: list[str] | None = None, *, wait: float = 3.0) -> list[str]:
     """Сверяет с сервером, какие из отправленных графиков дошли; возвращает недошедшие.
 
-    Без сервера (офлайн) или при ошибке чтения возвращает пустой список.
+    Без сервера (офлайн) или если сервер не позволяет это проверить — пустой список
+    (лучше промолчать, чем дать ложную тревогу).
     """
     expected = list(dict.fromkeys(_REPORTED_PLOTS if expected is None else expected))
     task = current_task()
@@ -264,26 +292,30 @@ def verify_plots(expected: list[str] | None = None, *, wait: float = 3.0) -> lis
     try:
         task.flush(wait_for_uploads=True)
         time.sleep(wait)
-        got = _server_plot_titles(task)
     except Exception as e:  # noqa: BLE001 — проверка не должна ронять обучение
         warnings.warn(f"Не удалось сверить графики с сервером ClearML: {e}", RuntimeWarning,
                       stacklevel=2)
+        return []
+    got = _server_plot_titles(task)
+    if got is None:
         return []
     return [t for t in expected if t not in got]
 
 
 def diagnose(sizes_mb: tuple[float, ...] = (0.05, 1, 3, 6, 10, 14), *, wait: float = 6.0,
-             project: str = "collection_lab_diagnose"):
+             project: str = "collection_lab_diagnose", keep: bool = False):
     """Проверка, почему графики не попадают в Plots: версии, режим, лимит размера сервера.
 
-    Отправляет в ClearML тестовые графики нарастающего размера (``sizes_mb``), читает с
-    сервера, какие дошли, и печатает вывод. Запускайте там же, где не сохраняются графики
-    (например, на ML Core). Создаёт задачу ``collection_lab_diagnose``, если активной нет.
+    Отправляет тестовые графики нарастающего размера (``sizes_mb``) в **отдельную**
+    временную задачу (ваша активная задача не затрагивается), узнаёт у сервера, какие
+    графики дошли, печатает вывод и удаляет временную задачу (``keep=True`` — оставить,
+    чтобы посмотреть вкладку Plots). Запускайте там же, где не сохраняются графики.
 
     Returns
     -------
     pd.DataFrame
-        ``size_mb, delivered`` — размер тестового графика и дошёл ли он до сервера.
+        ``size_mb, delivered`` — размер тестового графика и дошёл ли он до сервера
+        (``None``, если сервер не позволяет это проверить автоматически).
     """
     import plotly
     import plotly.graph_objects as go
@@ -291,17 +323,22 @@ def diagnose(sizes_mb: tuple[float, ...] = (0.05, 1, 3, 6, 10, 14), *, wait: flo
     if not is_available():
         raise ImportError("Нужен clearml: pip install collection_lab[clearml]")
     import clearml
+    from clearml import Task
 
     print(f"python {sys.version.split()[0]} | clearml {clearml.__version__} | "
           f"plotly {plotly.__version__} | numpy {np.__version__}")
     print(f"лимит фигуры в collection_lab: {max_plot_mb():g} МБ "
           f"(COLLECTION_LAB_CLEARML_MAX_MB)")
-    created = current_task() is None
-    task = current_task() or init_task(project, "diagnose")
+    main = current_task()
+    print(f"активная задача: {main.name if main else 'нет'} | офлайн: {is_offline()}")
+    task = Task.create(project_name=project, task_name="diagnose")
+    print(f"временная задача: {task.get_output_log_web_page()}")
+    others = list(_WATCHES)
+    for w in others:  # намеренные ошибки пробы не должны попасть в чужие эксперименты
+        w.paused = True
+    watch = ErrorWatch().start()
+    verified = True
     try:
-        print(f"задача: {task.name} ({task.id}) | офлайн: {is_offline()}")
-        print(f"страница: {task.get_output_log_web_page()}")
-        watch = ErrorWatch().start()
         logger = task.get_logger()
         rng = np.random.default_rng(0)
 
@@ -311,8 +348,7 @@ def diagnose(sizes_mb: tuple[float, ...] = (0.05, 1, 3, 6, 10, 14), *, wait: flo
         per_point = figure_size_mb(probe(20_000)) * 1e6 / 20_000  # байт на точку (измерено)
         rows = []
         for size in sizes_mb:
-            n = max(10, int(size * 1e6 / per_point))
-            fig = probe(n)
+            fig = probe(max(10, int(size * 1e6 / per_point)))
             real = figure_size_mb(fig)
             logger.report_plotly(title=f"diag_{real:.2f}MB", series="probe", iteration=0,
                                  figure=fig)
@@ -322,27 +358,44 @@ def diagnose(sizes_mb: tuple[float, ...] = (0.05, 1, 3, 6, 10, 14), *, wait: flo
         watch.stop()
         if is_offline():
             print("Офлайн-режим: данные на сервер не уходят, сверить доставку нельзя.")
+            keep = True
             return pd.DataFrame(rows).drop(columns="title")
         got = _server_plot_titles(task)
+        if got is None:
+            verified = False
+            keep = True
+            table = pd.DataFrame([{**r, "delivered": None} for r in rows]).drop(columns="title")
+            print(table.to_string(index=False))
+            print("\nСервер не позволяет проверить доставку автоматически. Откройте страницу "
+                  "временной задачи (ссылка выше), вкладка Plots: какие из diag_* есть, а какие "
+                  "нет. Задача оставлена; удалите её после просмотра.")
+            return table
         for r in rows:
             r["delivered"] = r["title"] in got
         table = pd.DataFrame(rows).drop(columns="title")
         print(table.to_string(index=False))
         ok = [r["size_mb"] for r in rows if r["delivered"]]
+        lost = [r["size_mb"] for r in rows if not r["delivered"]]
         if not ok:
             print("\nНи один тестовый график не дошёл: проблема не в размере — проверьте "
                   "права на запись в проект и сообщения об ошибках ниже.")
-        elif len(ok) == len(rows):
+        elif not lost:
             print(f"\nВсе графики до {max(ok)} МБ доставлены: лимит размера не найден. "
                   f"Если ваши графики не сохраняются, причина в другом — пришлите вывод.")
         else:
             lim = max(ok)
-            print(f"\nСервер отбрасывает графики больше ~{lim}–"
-                  f"{min(r['size_mb'] for r in rows if not r['delivered'])} МБ. "
+            print(f"\nСервер отбрасывает графики больше ~{lim}–{min(lost)} МБ. "
                   f"Рекомендуется: COLLECTION_LAB_CLEARML_MAX_MB={max(0.5, lim * 0.6):.1f}")
         for m in watch.messages:
             print(f"ClearML ERROR: {m}")
         return table
     finally:
-        if created:
-            task.close()
+        watch.stop()
+        for w in others:
+            w.paused = False
+        if verified and not keep:
+            try:
+                task.delete(delete_artifacts_and_models=True, skip_models_used_by_other_tasks=True,
+                            raise_on_error=False)
+            except Exception:  # noqa: BLE001 — очистка необязательна
+                print("Временную задачу удалить не удалось — удалите её вручную.")
