@@ -23,9 +23,13 @@ def scatter(n):
 class FakeLogger:
     def __init__(self):
         self.reported = []
+        self.tables = []
 
     def report_plotly(self, title, series, iteration, figure):
         self.reported.append((title, figure))
+
+    def report_table(self, title, series, iteration, table_plot):
+        self.tables.append(title)
 
 
 class FakeTask:
@@ -274,3 +278,51 @@ def test_report_figure_records_exception_from_clearml(fake_clearml):
     with pytest.warns(RuntimeWarning, match="не отправлен в ClearML: TypeError"):
         assert cml.report_figure(go.Figure(go.Scatter(y=[1])), "bad") is False
     assert cml._REPORT_LOG[-1]["reason"].startswith("TypeError")
+
+
+FAST = {"n_estimators": 100, "learning_rate": 0.1}
+
+
+def test_save_report_and_pipeline_reach_clearml(tmp_path, fake_clearml, binary_df, capsys):
+    """Регрессия: report.save()/pipe.save() пишут только на диск; в ClearML — через Experiment."""
+    from collection_lab.data import time_split
+    from collection_lab.modeling import train_model
+    from collection_lab.selection import CorrelationFilter, QualityFilter, SelectionPipeline
+    from collection_lab.validation import model_report
+
+    task = fake_clearml()
+    split = time_split(binary_df, "target", "report_date", oot_from="2024-03-01")
+    model = train_model(split, ["x1", "x2", "cat", "noise"], params=FAST)
+    report = model_report(model, split, date_col="report_date", n_buckets=10)
+    pipe = SelectionPipeline([QualityFilter(), CorrelationFilter(n_splits=2, verbose=False)]).fit(
+        split.train, "target", ["x1", "x2", "x1_copy", "noise", "const"], verbose=False)
+
+    with Experiment("p", root=tmp_path, clearml=True) as exp:
+        exp.save_report(report)
+        exp.save_pipeline(pipe)
+        table = exp.plots_summary()
+    sent = {t for t, _ in task.logger.reported}
+    assert {"report_gain_charts", "report_feature_importance", "report_auc_dynamics"} <= sent
+    assert "selection_funnel" in sent and "selection_1_quality_filter" in sent
+    reported_tables = set(table.loc[table["kind"] == "table", "title"])
+    assert {"report_metrics", "report_calibration", "selection_summary",
+            "selection_log"} <= reported_tables
+    assert table["sent"].all()
+    assert (tmp_path / "p" / "v_1" / "logs" / "report" / "report.html").exists()  # локальная копия
+    assert "НЕ отправлены" not in capsys.readouterr().out
+
+
+def test_experiment_log_dispatches_by_type(tmp_path, fake_clearml, binary_df):
+    from collection_lab.selection import quality_filter
+
+    task = fake_clearml()
+    with Experiment("p", root=tmp_path, clearml=True) as exp:
+        exp.log(quality_filter(binary_df, ["x1", "const"]))                # Result
+        exp.log(pd.DataFrame({"a": [1]}), "tbl")                            # DataFrame
+        exp.log(go.Figure(go.Scatter(y=[1, 2])), "fig")                     # фигура
+        with pytest.raises(ValueError, match="укажите name"):
+            exp.log(go.Figure(go.Scatter(y=[1])))
+        with pytest.raises(TypeError):
+            exp.log(object())
+    sent = {t for t, _ in task.logger.reported}
+    assert {"quality_filter", "fig"} <= sent

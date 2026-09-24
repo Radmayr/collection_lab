@@ -219,6 +219,58 @@ class Experiment:
         cml.report_figure(fig, title=name)
         return path
 
+    def save_report(self, report, name: str = "report") -> Path:
+        """Отчёт по модели (:func:`~collection_lab.validation.model_report`): таблицы и графики
+        уходят в ClearML (Plots), локальная копия — в ``logs/<name>/`` (csv + ``report.html``).
+        """
+        for key in ("metrics", "calibration", "segments", "feature_psi", "dynamics"):
+            table = getattr(report, key)
+            if table is not None:
+                has_index = not isinstance(table.index, pd.RangeIndex)
+                self.save_table(table.reset_index() if has_index else table, f"{name}_{key}")
+        for key, fig in report.figures.items():
+            self.save_figure(fig, f"{name}_{key}")
+        return report.save(self.logs_path / name)
+
+    def save_pipeline(self, pipe, name: str = "selection") -> Path:
+        """Пайплайн отбора признаков (:class:`~collection_lab.selection.SelectionPipeline`):
+        сводка, общий лог, воронка и результаты каждого шага — в ClearML и в ``logs/``.
+        """
+        self.save_table(pipe.summary(), f"{name}_summary")
+        self.save_table(pipe.log_, f"{name}_log")
+        self.save_figure(pipe.plot(), f"{name}_funnel")
+        for key, result in pipe.results_.items():
+            self.save_result(result, f"{name}_{key}")
+        return self.logs_path
+
+    def log(self, obj, name: str | None = None) -> None:
+        """Отправить объект библиотеки в эксперимент (локально и в ClearML), тип определяется сам.
+
+        Поддерживаются: ``Result``, ``ModelReport``, ``SelectionPipeline``, ``DataFrame``
+        (нужен ``name``) и plotly-фигура (нужен ``name``).
+        """
+        from collection_lab.selection.pipeline import SelectionPipeline
+        from collection_lab.validation.report import ModelReport
+
+        if isinstance(obj, Result):
+            self.save_result(obj, name)
+        elif isinstance(obj, ModelReport):
+            self.save_report(obj, name or "report")
+        elif isinstance(obj, SelectionPipeline):
+            self.save_pipeline(obj, name or "selection")
+        elif isinstance(obj, pd.DataFrame):
+            self.save_table(obj, self._need_name(name, "DataFrame"))
+        elif hasattr(obj, "to_plotly_json"):
+            self.save_figure(obj, self._need_name(name, "график"))
+        else:
+            raise TypeError(f"Не знаю, как сохранить объект типа {type(obj).__name__}")
+
+    @staticmethod
+    def _need_name(name: str | None, what: str) -> str:
+        if not name:
+            raise ValueError(f"Для объекта типа {what} укажите name: exp.log(obj, name='...')")
+        return name
+
     def flush(self) -> None:
         """Дождаться отправки накопленных событий в ClearML."""
         if self.task is not None:
