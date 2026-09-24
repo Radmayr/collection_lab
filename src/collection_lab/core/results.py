@@ -10,6 +10,8 @@ from typing import Any
 
 import pandas as pd
 
+from collection_lab.utils.io import write_csv
+
 
 def _jsonable(value: Any) -> Any:
     if isinstance(value, dict):
@@ -68,7 +70,7 @@ class Result:
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
         prefix = prefix or self.name
-        self.table.to_csv(directory / f"{prefix}_table.csv", index=False)
+        write_csv(self.table, directory / f"{prefix}_table.csv")
         meta = {"name": self.name, "selected": self.selected, "info": _jsonable(self.info)}
         with open(directory / f"{prefix}.json", "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)

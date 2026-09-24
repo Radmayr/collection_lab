@@ -1,6 +1,7 @@
 import json
 
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 import pytest
 
@@ -163,3 +164,21 @@ def test_experiment_context_manager(tmp_path, monkeypatch):
     with Experiment("p", root=tmp_path, clearml=True) as exp:
         exp.log_metrics({"x": 1})
     assert task.closed and exp.task is None
+
+
+def test_csv_files_are_excel_friendly(tmp_path, binary_df):
+    """CSV с русским текстом открывается в Excel: UTF-8 с BOM, pandas читает без искажений."""
+    from collection_lab.selection import CorrelationFilter, QualityFilter, SelectionPipeline
+
+    pipe = SelectionPipeline([QualityFilter(), CorrelationFilter(n_splits=2, verbose=False)]).fit(
+        binary_df, "target", ["x1", "x2", "x1_copy", "const", "all_nan"], verbose=False)
+    pipe.save(tmp_path)
+    raw = (tmp_path / "selection_log.csv").read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf")                               # BOM есть
+    assert "Пропущено".encode() in raw                                   # текст в UTF-8
+    assert "Пропущено" in raw.decode("utf-8-sig")
+    log = pd.read_csv(tmp_path / "selection_log.csv")                    # pandas: без ﻿ в заголовках
+    assert list(log.columns) == ["step", "feature", "action", "reason"]
+    assert log["reason"].str.contains("Пропущено|Стандартное").any()
+    for f in tmp_path.glob("*_table.csv"):
+        assert f.read_bytes().startswith(b"\xef\xbb\xbf")

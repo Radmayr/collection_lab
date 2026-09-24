@@ -33,6 +33,7 @@ import pandas as pd
 
 from collection_lab.core.results import Result, _jsonable
 from collection_lab.tracking import clearml as cml
+from collection_lab.utils.io import write_csv
 
 
 def _next_version(project_dir: Path) -> int:
@@ -188,7 +189,7 @@ class Experiment:
     def save_table(self, df: pd.DataFrame, name: str, *, to_clearml: bool = True) -> Path:
         """Таблица → ``logs/<name>.csv`` (+ ClearML)."""
         path = self.logs_path / f"{name}.csv"
-        df.to_csv(path, index=False)
+        write_csv(df, path)
         if to_clearml:
             cml.report_table(df.head(1000), title=name)
         return path

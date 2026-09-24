@@ -16,6 +16,7 @@ from collection_lab.metrics.classification import gini, ks, logloss, metrics_by_
 from collection_lab.metrics.stability import feature_psi, psi
 from collection_lab.plotting.theme import combine
 from collection_lab.selection.importance import importance_plot
+from collection_lab.utils.io import write_csv
 from collection_lab.validation.dynamics import metric_dynamics
 
 
@@ -83,7 +84,7 @@ class ModelReport:
         for name in ("metrics", "calibration", "segments", "feature_psi", "dynamics"):
             obj = getattr(self, name)
             if obj is not None:
-                obj.to_csv(directory / f"report_{name}.csv")
+                write_csv(obj, directory / f"report_{name}.csv", index=True)
         self.to_html(directory / "report.html")
         return directory
 

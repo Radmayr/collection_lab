@@ -28,6 +28,7 @@ from collection_lab.selection.filters import quality_filter
 from collection_lab.selection.importance import cumulative_importance_selection
 from collection_lab.selection.rfe import rfe
 from collection_lab.selection.univariate import univariate_filter
+from collection_lab.utils.io import write_csv
 
 
 class Step:
@@ -190,5 +191,5 @@ class SelectionPipeline:
         directory.mkdir(parents=True, exist_ok=True)
         for key, res in self.results_.items():
             res.save(directory, prefix=key)
-        self.log_.to_csv(directory / "selection_log.csv", index=False)
-        self.summary().to_csv(directory / "selection_summary.csv", index=False)
+        write_csv(self.log_, directory / "selection_log.csv")
+        write_csv(self.summary(), directory / "selection_summary.csv")
