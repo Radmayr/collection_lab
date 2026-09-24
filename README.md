@@ -9,7 +9,7 @@ LightGBM / CatBoost; регрессия поддерживается ядром)
 С GitHub (на ML Core или любой машине с `pip`):
 
 ```bash
-pip install "collection_lab[all] @ git+https://github.com/<user>/collection_lab.git"
+pip install "collection_lab[all] @ git+https://github.com/Radmayr/collection_lab.git"
 ```
 
 Опциональные зависимости: `catboost`, `optuna`, `clearml`, `all`, `dev`.
@@ -17,7 +17,7 @@ pip install "collection_lab[all] @ git+https://github.com/<user>/collection_lab.
 Для разработки (правки видны сразу, без переустановки):
 
 ```bash
-git clone https://github.com/<user>/collection_lab.git && cd collection_lab
+git clone https://github.com/Radmayr/collection_lab.git && cd collection_lab
 python -m venv .venv && .venv/Scripts/activate      # Linux: source .venv/bin/activate
 pip install -e ".[dev]"
 ```
