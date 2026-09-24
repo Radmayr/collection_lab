@@ -165,16 +165,23 @@ for f in [c for c in selected if c not in cats][:3]:
         fig.show()
 """)
 
-md("## 7. Эксперимент\n\n`clearml=True` дублирует всё в ClearML.")
+md("""
+## 7. Эксперимент
+
+`clearml=True` дублирует всё в ClearML. **В ClearML уходит только то, что отправлено через
+`exp`** (`save_pipeline`, `save_report`, `save_result`, `save_figure`, `save_table`, `log`);
+`pipe.save()` и `report.save()` пишут лишь файлы на диск.
+""")
 code("""
-exp = cl.tracking.Experiment("RTK_model", root="experiments")
-exp.log_params(tune.info["best_params"], name="model")
-exp.log_metrics({f"auc_{k}": v for k, v in final.scores_.items()})
-exp.save_features(selected, cat_features=cats, target=TARGET)
-exp.save_model(final)
-pipe.save(exp.logs_path / "selection")
-report.save(exp.logs_path / "report")
-exp
+with cl.tracking.Experiment("RTK_model", root="experiments") as exp:   # clearml=True — в ClearML
+    exp.log_params(tune.info["best_params"], name="model")
+    exp.log_metrics({f"auc_{k}": v for k, v in final.scores_.items()})
+    exp.save_features(selected, cat_features=cats, target=TARGET)
+    exp.save_model(final)
+    exp.save_pipeline(pipe)      # сводка, общий лог, воронка, результаты шагов
+    exp.save_report(report)      # метрики, калибровка, gain chart, важности, динамика
+    exp.save_result(fwd, "incremental")
+    print(exp.plots_summary()[["title", "kind", "sent", "on_server"]])
 """)
 
 nb = nbf.v4.new_notebook(cells=cells)
