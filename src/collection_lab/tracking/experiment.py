@@ -105,6 +105,8 @@ class Experiment:
                                      "params": {}, "metrics": {}}
         self.task = None
         self._watch = None
+        self._summary_printed = False
+        cml.reset_reported_plots()  # журнал отправок графиков — на каждый эксперимент свой
         if clearml:
             # сначала ClearML: при ошибке не остаётся пустой локальной папки версии
             previous = cml.close_current_task()
@@ -113,7 +115,6 @@ class Experiment:
                       f"(одна активная задача на процесс)")
             self.task = cml.init_task(project, name or f"v_{self.version}", tags=tags,
                                       offline=clearml_offline)
-            cml.reset_reported_plots()
             self._watch = cml.ErrorWatch().start()  # ошибки ClearML в фоне: покажем при close()
         self.models_path.mkdir(parents=True, exist_ok=True)
         self.logs_path.mkdir(parents=True, exist_ok=True)
@@ -223,23 +224,60 @@ class Experiment:
         if self.task is not None:
             self.task.flush(wait_for_uploads=True)
 
-    def close(self, verify: bool = True) -> None:
+    def plots_summary(self, check: bool = True) -> pd.DataFrame:
+        """Таблица по всем отправленным в ClearML графикам и таблицам: отправлено ли, причина
+        отказа, подтверждён ли сервером (см. :func:`collection_lab.tracking.clearml.plots_summary`).
+        """
+        return cml.plots_summary(check=check)
+
+    def close(self, verify: bool = True, quiet: bool = False) -> None:
         """Завершить задачу ClearML (локальные файлы уже сохранены). Можно вызывать повторно.
 
         Перед закрытием дожидается отправки и (``verify=True``, не офлайн) сверяет с сервером,
-        все ли графики дошли: недошедшие и ошибки ClearML выводятся предупреждением.
+        все ли графики дошли. Печатает итог одной строкой (``quiet=True`` — без итога);
+        недошедшие графики и ошибки ClearML выводятся предупреждением.
         """
         if self.task is None:
+            summary = cml.plots_summary(check=False)
+            unsent = summary[~summary["sent"].astype(bool)] if len(summary) else summary
+            if len(unsent) and not quiet and not self._summary_printed:
+                print("[collection_lab] ClearML: графики НЕ отправлены — нет активной задачи "
+                      "(создайте Experiment(..., clearml=True) или Task.init): "
+                      + ", ".join(unsent["title"]))
+            self._summary_printed = True
             return
-        missing = cml.verify_plots() if verify else []
+        summary = cml.plots_summary(check=verify)
+        missing = summary.loc[summary["on_server"] == False, "title"].tolist()  # noqa: E712
         if missing:
             warnings.warn(
                 "В ClearML не дошли графики: " + ", ".join(missing) + ". Обычно сервер отклоняет "
                 "слишком большие запросы. Диагностика: collection_lab.tracking.clearml.diagnose()",
                 RuntimeWarning, stacklevel=2)
+        if not quiet:
+            print(self._plots_line(summary))
+        self._summary_printed = True
         self.task.close()
         self.task = None
         if self._watch is not None:
             self._watch.stop()
             self._watch.warn()
             self._watch = None
+
+    @staticmethod
+    def _plots_line(summary: pd.DataFrame) -> str:
+        total, sent = len(summary), int(summary["sent"].sum()) if len(summary) else 0
+        if total == 0:
+            return ("[collection_lab] ClearML: ни один график не отправлялся "
+                    "(save_figure / save_result не вызывались?)")
+        confirmed = int((summary["on_server"] == True).sum())  # noqa: E712
+        line = f"[collection_lab] ClearML: отправлено {sent} из {total}"
+        if confirmed:
+            line += f", подтверждено сервером {confirmed}"
+        elif sent:
+            line += ", сервер не позволяет подтвердить доставку — смотрите вкладку Plots"
+        skipped = summary[~summary["sent"].astype(bool)]
+        if len(skipped):
+            reasons = "; ".join(f"{t}: {r}" for t, r in zip(skipped["title"], skipped["reason"],
+                                                            strict=True))
+            line += f". НЕ отправлены: {reasons}"
+        return line

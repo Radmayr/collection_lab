@@ -226,3 +226,51 @@ def test_paused_error_watch_ignores_errors():
     finally:
         watch.stop()
     assert watch.messages == ["настоящая ошибка"]
+
+
+def test_close_prints_summary_when_all_confirmed(tmp_path, fake_clearml, capsys):
+    fake_clearml()
+    with Experiment("p", root=tmp_path, clearml=True) as exp:
+        exp.save_figure(go.Figure(go.Scatter(y=[1, 2])), "a")
+        exp.save_figure(go.Figure(go.Scatter(y=[1, 2])), "b")
+    assert "отправлено 2 из 2, подтверждено сервером 2" in capsys.readouterr().out
+
+
+def test_close_summary_when_server_cannot_confirm(tmp_path, fake_clearml, capsys):
+    fake_clearml(metrics_api_fails=True)
+    with Experiment("p", root=tmp_path, clearml=True) as exp:
+        exp.save_figure(go.Figure(go.Scatter(y=[1, 2])), "a")
+    assert "сервер не позволяет подтвердить доставку" in capsys.readouterr().out
+
+
+def test_close_summary_when_nothing_was_reported(tmp_path, fake_clearml, capsys):
+    fake_clearml()
+    with Experiment("p", root=tmp_path, clearml=True):
+        pass
+    assert "ни один график не отправлялся" in capsys.readouterr().out
+
+
+def test_summary_explains_why_figure_was_not_sent_without_task(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cml, "current_task", lambda: None)
+    exp = Experiment("p", root=tmp_path)                      # без clearml=True и без задачи
+    exp.save_figure(go.Figure(go.Scatter(y=[1, 2])), "lost")
+    table = exp.plots_summary()
+    assert table.loc[0, "title"] == "lost" and not table.loc[0, "sent"]
+    assert table.loc[0, "reason"] == "нет активной задачи ClearML"
+    exp.close()
+    exp.close()                                                # повторный close не дублирует вывод
+    out = capsys.readouterr().out
+    assert out.count("графики НЕ отправлены") == 1 and "lost" in out
+
+
+def test_report_figure_records_exception_from_clearml(fake_clearml):
+    task = fake_clearml()
+    task.active = True
+
+    def boom(**kwargs):
+        raise TypeError("Object of type Timestamp is not JSON serializable")
+
+    task.logger.report_plotly = boom
+    with pytest.warns(RuntimeWarning, match="не отправлен в ClearML: TypeError"):
+        assert cml.report_figure(go.Figure(go.Scatter(y=[1])), "bad") is False
+    assert cml._REPORT_LOG[-1]["reason"].startswith("TypeError")

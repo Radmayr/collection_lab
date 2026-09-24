@@ -162,6 +162,7 @@ class ErrorWatch(logging.Handler):
 
 # --- отчёты --------------------------------------------------------------------------------
 _REPORTED_PLOTS: list[str] = []
+_REPORT_LOG: list[dict[str, Any]] = []  # по записи на каждую попытку отправки графика/таблицы
 
 
 def reported_plots() -> list[str]:
@@ -171,6 +172,13 @@ def reported_plots() -> list[str]:
 
 def reset_reported_plots() -> None:
     _REPORTED_PLOTS.clear()
+    _REPORT_LOG.clear()
+
+
+def _log_report(title: str, kind: str, sent: bool, reason: str,
+                size_mb: float = float("nan")) -> None:
+    _REPORT_LOG.append({"title": title, "kind": kind, "sent": sent, "reason": reason,
+                        "size_mb": round(size_mb, 3) if size_mb == size_mb else size_mb})
 
 
 def _fit_figure(fig, title: str, limit_mb: float):
@@ -204,16 +212,28 @@ def report_figure(fig, title: str, series: str = "plot", iteration: int = 0,
     """Plotly-фигура в раздел Plots текущей задачи. Возвращает ``True``, если отправлено.
 
     Фигуры больше лимита (``max_mb`` или :func:`max_plot_mb`) прореживаются с предупреждением.
+    Результат каждой попытки (в том числе причина отказа) пишется в журнал —
+    см. :func:`plots_summary`.
     """
     logger = _logger()
     if logger is None:
+        _log_report(title, "figure", False, "нет активной задачи ClearML")
         return False
     fitted = _fit_figure(fig, title, max_mb if max_mb is not None else max_plot_mb())
     if fitted is None:
+        _log_report(title, "figure", False, "слишком большой даже после прореживания")
         return False
-    logger.report_plotly(title=title, series=series, iteration=iteration, figure=fitted)
+    try:
+        logger.report_plotly(title=title, series=series, iteration=iteration, figure=fitted)
+    except Exception as e:  # noqa: BLE001 — фиксируем причину, не роняем обучение
+        _log_report(title, "figure", False, f"{type(e).__name__}: {e}"[:200])
+        warnings.warn(f"График {title!r} не отправлен в ClearML: {type(e).__name__}: {e}",
+                      RuntimeWarning, stacklevel=3)
+        return False
     _REPORTED_PLOTS.append(title)
-    if fitted is not fig or figure_size_mb(fitted) > 1.0:
+    size = figure_size_mb(fitted)
+    _log_report(title, "figure", True, "уменьшен" if fitted is not fig else "ok", size)
+    if fitted is not fig or size > 1.0:
         flush()  # крупные фигуры не копим: ClearML склеивает события в один запрос с лимитом
     return True
 
@@ -222,9 +242,17 @@ def report_table(df: pd.DataFrame, title: str, series: str = "table", iteration:
     """DataFrame в раздел Plots (таблица)."""
     logger = _logger()
     if logger is None:
+        _log_report(title, "table", False, "нет активной задачи ClearML")
         return False
-    logger.report_table(title=title, series=series, iteration=iteration, table_plot=df)
+    try:
+        logger.report_table(title=title, series=series, iteration=iteration, table_plot=df)
+    except Exception as e:  # noqa: BLE001
+        _log_report(title, "table", False, f"{type(e).__name__}: {e}"[:200])
+        warnings.warn(f"Таблица {title!r} не отправлена в ClearML: {type(e).__name__}: {e}",
+                      RuntimeWarning, stacklevel=3)
+        return False
     _REPORTED_PLOTS.append(title)
+    _log_report(title, "table", True, "ok")
     return True
 
 
@@ -277,6 +305,28 @@ def _server_plot_titles(task) -> set[str] | None:
         return titles
     except Exception:  # noqa: BLE001 — старый сервер/SDK: проверить нельзя, но и не тревожим
         return None
+
+
+def plots_summary(*, check: bool = True, wait: float = 3.0) -> pd.DataFrame:
+    """Что произошло с каждым графиком: отправлен ли, почему нет, дошёл ли до сервера.
+
+    Колонки: ``title, kind, sent, reason, size_mb, on_server`` (``on_server``: ``True`` —
+    сервер подтвердил, ``False`` — не дошёл, ``None`` — проверить нельзя или не проверялось).
+    """
+    table = pd.DataFrame(_REPORT_LOG, columns=["title", "kind", "sent", "reason", "size_mb"])
+    table["on_server"] = None
+    task = current_task()
+    if check and task is not None and not is_offline() and table["sent"].any():
+        try:
+            task.flush(wait_for_uploads=True)
+            time.sleep(wait)
+        except Exception:  # noqa: BLE001
+            return table
+        got = _server_plot_titles(task)
+        if got is not None:
+            table["on_server"] = [(t in got) if sent else None
+                                  for t, sent in zip(table["title"], table["sent"], strict=True)]
+    return table
 
 
 def verify_plots(expected: list[str] | None = None, *, wait: float = 3.0) -> list[str]:
