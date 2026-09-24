@@ -12,7 +12,7 @@ dist/
 .ipynb_checkpoints/
 
 # данные и артефакты экспериментов — не в git
-data/
+/data/
 *.csv
 *.xlsx
 *.parquet
