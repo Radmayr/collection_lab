@@ -107,11 +107,21 @@ pipe.log_.head(15)
 """)
 code("pipe.results_['4_rfe'].plot()")
 
-md("### Порядок признаков: forward-оценка")
+md("""
+### Порядок признаков: forward-оценка на train (CV), val и test
+
+Отбор идёт только по CV на train. Val и test лишь оцениваются на каждом шаге: если CV растёт,
+а test падает, добавленный признак приводит к переобучению.
+""")
 code("""
-fwd = cl.selection.incremental_feature_eval(split.train, split.train[TARGET], selected,
-                                            cat_features=cats, n_splits=5, verbose=False)
+fwd = cl.selection.incremental_feature_eval(
+    split.train, split.train[TARGET], selected, cat_features=cats,
+    eval_sets=split.eval_sets(),        # val и test; можно любые: {"имя": (X, y)}
+    n_splits=5, verbose=False)
 fwd.plot()
+""")
+code("""
+fwd.table[["n_features", "feature_changed", "auc_mean", "auc_val", "auc_test", "auc_delta_test"]]
 """)
 
 md("""

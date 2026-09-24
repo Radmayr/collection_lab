@@ -169,3 +169,60 @@ def test_pipeline(binary_df, tmp_path):
     pipe.save(tmp_path)
     assert (tmp_path / "selection_log.csv").exists()
     assert np.isfinite(pipe.results_["1_quality_filter"].info["n_dropped"])
+
+
+def test_incremental_eval_sets_columns_and_plot(binary_df):
+    split = random_split(binary_df, "target", test_size=0.25)
+    feats = ["x1", "x2", "noise", "cat"]
+    res = incremental_feature_eval(
+        split.train, split.train["target"], feats, eval_sets=split.eval_sets(),
+        n_splits=2, params=FAST, n_jobs=1, verbose=False)
+    t = res.table
+    expected = {"auc_val", "auc_test", "auc_delta_val", "auc_delta_test", "auc_mean"}
+    assert expected <= set(t.columns)
+    assert t["auc_val"].between(0.4, 1).all() and t["auc_test"].between(0.4, 1).all()
+    assert np.isnan(t["auc_delta_val"].iloc[0])        # у первого шага дельты нет
+    assert res.info["eval_sets"] == ["val", "test"] and "cv" in res.info["best_step"]
+    fig = res.plot()
+    names = {tr.name for tr in fig.data}
+    assert {"train (CV)", "val", "test"} <= names
+
+
+def test_incremental_eval_sets_any_number_and_names(binary_df):
+    split = random_split(binary_df, "target", test_size=0.25)
+    Xa, Xb = split.val, split.test
+    sets = {"a": (Xa, Xa["target"]), "b": (Xb, Xb["target"]), "c_oot": (Xb, Xb["target"])}
+    res = incremental_feature_eval(split.train, split.train["target"], ["x1", "noise"],
+                                   eval_sets=sets, n_splits=2, params=FAST, n_jobs=1,
+                                   verbose=False)
+    assert {"auc_a", "auc_b", "auc_c_oot"} <= set(res.table.columns)
+    only_val = incremental_feature_eval(split.train, split.train["target"], ["x1", "noise"],
+                                        eval_sets=split.eval_sets(["val"]), n_splits=2,
+                                        params=FAST, n_jobs=1, verbose=False)
+    assert "auc_test" not in only_val.table.columns
+    with pytest.raises(ValueError, match="нет признаков"):
+        incremental_feature_eval(split.train, split.train["target"], ["x1", "noise"],
+                                 eval_sets={"bad": (Xa[["x1"]], Xa["target"])}, n_splits=2,
+                                 params=FAST, verbose=False)
+
+
+@pytest.mark.parametrize("mode", ["ordered", "greedy"])
+def test_incremental_eval_sets_do_not_affect_selection(binary_df, mode):
+    """Наборы только оцениваются: порядок признаков и CV-метрика те же, что без наборов."""
+    split = random_split(binary_df, "target", test_size=0.25)
+    kw = dict(direction="forward", mode=mode, n_splits=2, params=FAST, n_jobs=1, verbose=False)
+    feats = ["x1", "x2", "noise"]
+    without = incremental_feature_eval(split.train, split.train["target"], feats, **kw)
+    with_sets = incremental_feature_eval(split.train, split.train["target"], feats,
+                                         eval_sets=split.eval_sets(), **kw)
+    assert list(without.table["feature_changed"]) == list(with_sets.table["feature_changed"])
+    assert np.allclose(without.table["auc_mean"], with_sets.table["auc_mean"])
+
+
+def test_datasplit_eval_sets(binary_df):
+    with_test = random_split(binary_df, "target", test_size=0.2)
+    assert list(with_test.eval_sets()) == ["val", "test"]
+    no_test = random_split(binary_df, "target")
+    assert list(no_test.eval_sets()) == ["val"]           # отсутствующий test пропускается
+    with pytest.raises(KeyError):
+        no_test.eval_sets(["nope"])

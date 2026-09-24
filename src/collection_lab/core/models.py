@@ -293,6 +293,12 @@ class CatBoostModel(BaseModel):
         return self.estimator_.tree_count_
 
 
+def iterations_param(model: BaseModel, n: int) -> dict[str, int]:
+    """Параметр числа деревьев для модели: ``{"n_estimators": n}`` (LightGBM) или
+    ``{"iterations": n}`` (CatBoost)."""
+    return {"n_estimators": n} if isinstance(model, LGBMModel) else {"iterations": n}
+
+
 MODELS: dict[str, type[BaseModel]] = {
     "lgbm": LGBMModel,
     "lightgbm": LGBMModel,

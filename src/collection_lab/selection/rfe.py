@@ -11,15 +11,11 @@ import plotly.graph_objects as go
 
 from collection_lab.config import RANDOM_STATE
 from collection_lab.core.cv import CVResult, cross_validate, make_folds
-from collection_lab.core.models import BaseModel, LGBMModel, make_model
+from collection_lab.core.models import BaseModel, iterations_param, make_model
 from collection_lab.core.results import Result
 from collection_lab.data.types import detect_categorical
 from collection_lab.metrics.classification import get_metric
 from collection_lab.plotting.theme import color, style
-
-
-def _iterations_param(model: BaseModel, n: int) -> dict[str, int]:
-    return {"n_estimators": n} if isinstance(model, LGBMModel) else {"iterations": n}
 
 
 def rfe(
@@ -153,7 +149,7 @@ def rfe(
     while len(current) > min_features:
         iteration += 1
         n_iter = baseline.mean_best_iteration
-        imp_model = base_model.clone(_iterations_param(base_model, n_iter) if n_iter else None)
+        imp_model = base_model.clone(iterations_param(base_model, n_iter) if n_iter else None)
         imp_model.fit(X[current], y, cat_features=[c for c in cat_features if c in current])
         importances = imp_model.feature_importance(importance).sort_values()
         tries = min(step, len(current) - min_features)

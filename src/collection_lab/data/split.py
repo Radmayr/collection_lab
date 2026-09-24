@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 
 import pandas as pd
@@ -58,6 +58,22 @@ class DataSplit:
         """Возвращает ``(X, y)`` для части ``'train' | 'val' | 'test'``."""
         df = dict(self.items())[part]
         return df[features], df[self.target]
+
+    def eval_sets(
+        self, parts: Sequence[str] = ("val", "test")
+    ) -> dict[str, tuple[pd.DataFrame, pd.Series]]:
+        """Наборы для оценки: ``{"val": (df, y), "test": (df, y)}`` — вход ``eval_sets=`` у
+        :func:`~collection_lab.selection.incremental_feature_eval`. Отсутствующий test пропускается.
+        """
+        available = dict(self.items())
+        out = {}
+        for name in parts:
+            if name not in available:
+                if name == "test":
+                    continue
+                raise KeyError(f"Нет части {name!r}; доступны: {list(available)}")
+            out[name] = (available[name], available[name][self.target])
+        return out
 
     def summary(self, date_col: str | None = None) -> pd.DataFrame:
         """Размер, число и доля таргета по частям (+ диапазон дат, если задан ``date_col``)."""

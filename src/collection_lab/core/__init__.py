@@ -7,6 +7,7 @@ from collection_lab.core.models import (
     CatBoostModel,
     FeaturePreparer,
     LGBMModel,
+    iterations_param,
     make_lgbm_ready,
     make_model,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "FeaturePreparer",
     "LGBMModel",
     "cross_validate",
+    "iterations_param",
     "make_folds",
     "make_lgbm_ready",
     "make_model",

@@ -14,7 +14,7 @@ from tqdm.auto import tqdm
 
 from collection_lab.config import LGBM_INCREMENTAL_PARAMS, RANDOM_STATE, merge_params
 from collection_lab.core.cv import cross_validate, make_folds
-from collection_lab.core.models import BaseModel, make_model
+from collection_lab.core.models import BaseModel, iterations_param, make_model
 from collection_lab.core.results import Result
 from collection_lab.data.types import detect_categorical
 from collection_lab.metrics.classification import Metric, get_metric
@@ -286,6 +286,7 @@ def incremental_feature_eval(
     y,
     features: Sequence[str],
     *,
+    eval_sets: dict[str, tuple[pd.DataFrame, Any]] | None = None,
     cat_features: Iterable[str] | None = None,
     direction: str = "forward",
     mode: str = "ordered",
@@ -300,23 +301,40 @@ def incremental_feature_eval(
     random_state: int = RANDOM_STATE,
     verbose: bool = True,
 ) -> Result:
-    """Пошагово добавляет (forward) или убирает (backward) признаки и считает CV-метрику.
+    """Пошагово добавляет (forward) или убирает (backward) признаки и считает метрику на
+    каждом шаге: по CV на ``X`` и — необязательно — на любом числе внешних наборов.
+
+    Внешние наборы (``eval_sets``, например val и test) показывают, не переобучается ли
+    модель на train: если CV растёт, а метрика на test падает, последний добавленный признак
+    подсвечивает переобучение.
+
+    **Без утечки.** Признаки на каждом шаге выбираются только по CV на ``X`` (в режиме
+    ``greedy`` — тоже). Для внешних наборов на каждом шаге модель обучается на всём ``X`` с
+    числом деревьев, равным среднему ``best_iteration`` из CV (без early stopping), и только
+    оценивается на наборах — они ни на что не влияют.
 
     Parameters
     ----------
+    eval_sets : dict, optional
+        ``{"имя": (X_eval, y_eval)}`` — любое число наборов; порядок задаёт порядок на графике.
+        Для :class:`~collection_lab.data.DataSplit`: ``eval_sets=split.eval_sets()``
+        (val и test) или ``split.eval_sets(["val"])``.
     direction : {"forward", "backward"}
     mode : {"ordered", "greedy"}
         ``"ordered"`` — порядок из ``features`` (forward берёт первый оставшийся,
-        backward убирает последний); ``"greedy"`` — на каждом шаге лучший вариант.
+        backward убирает последний); ``"greedy"`` — на каждом шаге лучший вариант по CV.
     n_jobs : int
         ``ordered`` — параллель по фолдам, ``greedy`` — по кандидатам.
 
     Returns
     -------
     Result
-        ``table``: ``step, n_features, feature_changed, action, auc_mean, auc_std,
-        n_folds_ok, auc_delta, auc_ratio, auc_signal_ratio, features_set``
-        (префикс ``auc`` заменяется на имя метрики); ``selected`` — лучший набор.
+        ``table``: ``step, n_features, feature_changed, action, <m>_mean, <m>_std,
+        n_folds_ok, <m>_delta, <m>_ratio, <m>_signal_ratio, features_set`` (``<m>`` — имя
+        метрики, по умолчанию ``auc``) и для каждого набора ``<m>_<имя>`` (метрика) и
+        ``<m>_delta_<имя>`` (изменение относительно предыдущего шага). ``selected`` — набор
+        с лучшей CV-метрикой; ``info["best_step"]`` — число признаков с максимумом по каждому
+        набору. ``plot()`` — метрика по наборам, изменение на шаге, доля полезного сигнала.
     """
     if direction not in ("forward", "backward"):
         raise ValueError("direction: 'forward' или 'backward'")
@@ -326,6 +344,13 @@ def incremental_feature_eval(
     missing = [f for f in features if f not in X.columns]
     if missing:
         raise ValueError(f"Признаки не найдены в X: {missing}")
+    eval_sets = {str(k): (Xe, np.asarray(ye)) for k, (Xe, ye) in (eval_sets or {}).items()}
+    for k, (Xe, ye) in eval_sets.items():
+        lost = [f for f in features if f not in Xe.columns]
+        if lost:
+            raise ValueError(f"В наборе {k!r} нет признаков: {lost}")
+        if len(Xe) != len(ye):
+            raise ValueError(f"В наборе {k!r} длины X и y не совпадают.")
     if cat_features is None:
         cat_features = detect_categorical(X[features])
     cat_features = list(cat_features)
@@ -340,24 +365,37 @@ def incremental_feature_eval(
     n_fold_jobs = min(abs(n_jobs), len(folds)) if n_jobs not in (0, 1) else 1
 
     def cv(feats: list[str], jobs: int = 1):
+        """(mean, std, n_ok, среднее число деревьев) по CV на X."""
         if not feats:
-            return np.nan, np.nan, 0
+            return np.nan, np.nan, 0, None
         r = cross_validate(X, y, features=feats,
                            cat_features=[c for c in cat_features if c in feats],
                            model=base_model, folds=folds, metric=metric_obj,
                            early_stopping_rounds=early_stopping_rounds, return_oof=False,
                            n_jobs=jobs)
         ok = [s for s in r.fold_scores if not np.isnan(s)]
-        return (float(np.mean(ok)), float(np.std(ok)), len(ok)) if ok else (np.nan, np.nan, 0)
+        stats = (float(np.mean(ok)), float(np.std(ok)), len(ok)) if ok else (np.nan, np.nan, 0)
+        return (*stats, r.mean_best_iteration)
 
-    full_mean, _, _ = cv(features, n_fold_jobs)
+    def eval_on_sets(feats: list[str], n_iter: int | None) -> dict[str, float]:
+        """Метрика на внешних наборах: модель на всём X, деревьев столько же, сколько в CV."""
+        if not eval_sets or not feats:
+            return dict.fromkeys(eval_sets, np.nan)
+        m = base_model.clone(iterations_param(base_model, n_iter) if n_iter else None)
+        m.early_stopping_rounds = None  # наборы не участвуют в обучении и остановке
+        m.fit(X[feats], y, cat_features=[c for c in cat_features if c in feats])
+        return {k: metric_obj(ye, m.predict(Xe[feats])) for k, (Xe, ye) in eval_sets.items()}
+
+    full_mean, _, _, full_iter = cv(features, n_fold_jobs)
+    full_eval = eval_on_sets(features, full_iter)
     if verbose:
-        print(f"[baseline] {name} на всех {len(features)} признаках: {full_mean:.5f}")
+        extra = "".join(f", {k}: {v:.5f}" for k, v in full_eval.items())
+        print(f"[baseline] {name} на всех {len(features)} признаках: CV {full_mean:.5f}{extra}")
 
     remaining = list(features)
     current: list[str] = [] if direction == "forward" else list(features)
     total = len(features) if max_steps is None else min(max_steps, len(features))
-    records, prev = [], np.nan
+    records, prev, prev_eval = [], np.nan, dict.fromkeys(eval_sets, np.nan)
     for step in tqdm(range(1, total + 1), desc=f"{direction}/{mode}", disable=not verbose):
         candidates = remaining if direction == "forward" else current
         if not candidates:
@@ -366,7 +404,7 @@ def incremental_feature_eval(
             chosen = candidates[0] if direction == "forward" else candidates[-1]
             trial = current + [chosen] if direction == "forward" else [
                 f for f in current if f != chosen]
-            mean, std, n_ok = cv(trial, n_fold_jobs)
+            mean, std, n_ok, n_iter = cv(trial, n_fold_jobs)
         else:
             def attempt(f, cur=tuple(current)):
                 t = [*cur, f] if direction == "forward" else [c for c in cur if c != f]
@@ -377,50 +415,83 @@ def incremental_feature_eval(
             valid = [r for r in results if not np.isnan(r[1])]
             if not valid:
                 break
-            chosen, mean, std, n_ok = max(valid, key=lambda r: r[1] if metric_obj.greater_is_better
-                                          else -r[1])
+            chosen, mean, std, n_ok, n_iter = max(
+                valid, key=lambda r: r[1] if metric_obj.greater_is_better else -r[1])
             trial = current + [chosen] if direction == "forward" else [
                 f for f in current if f != chosen]
+        ev = eval_on_sets(trial, n_iter)
         denom = full_mean - 0.5
-        records.append({
+        row = {
             "step": step, "n_features": len(trial), "feature_changed": chosen,
             "action": "add" if direction == "forward" else "remove",
             f"{name}_mean": mean, f"{name}_std": std, "n_folds_ok": n_ok,
             f"{name}_delta": mean - prev if not np.isnan(prev) else np.nan,
             f"{name}_ratio": mean / full_mean if full_mean else np.nan,
             f"{name}_signal_ratio": (mean - 0.5) / denom if denom else np.nan,
-            "features_set": list(trial),
-        })
+        }
+        for k, v in ev.items():
+            row[f"{name}_{k}"] = v
+            row[f"{name}_delta_{k}"] = v - prev_eval[k] if not np.isnan(prev_eval[k]) else np.nan
+        row["features_set"] = list(trial)
+        records.append(row)
         current = trial
         remaining = [f for f in remaining if f != chosen]
-        prev = mean
+        prev, prev_eval = mean, ev
 
     table = pd.DataFrame(records)
     best = None
+    best_step: dict[str, int] = {}
     if not table.empty:
-        idx = (table[f"{name}_mean"].idxmax() if metric_obj.greater_is_better
-               else table[f"{name}_mean"].idxmin())
+        pick = "idxmax" if metric_obj.greater_is_better else "idxmin"
+        idx = getattr(table[f"{name}_mean"], pick)()
         best = table.loc[idx, "features_set"]
-    info = {"metric": name, "score_full": full_mean, "direction": direction, "mode": mode}
+        best_step["cv"] = int(table.loc[idx, "n_features"])
+        for k in eval_sets:
+            col = table[f"{name}_{k}"]
+            if col.notna().any():
+                best_step[k] = int(table.loc[getattr(col, pick)(), "n_features"])
+    info = {"metric": name, "score_full": full_mean, "score_full_eval": full_eval,
+            "direction": direction, "mode": mode, "eval_sets": list(eval_sets),
+            "best_step": best_step}
     return Result("incremental_feature_eval", table, best, info, plotter=_plot_incremental)
 
 
 def _plot_incremental(result: Result) -> go.Figure:
-    t, name, full = result.table, result.info["metric"], result.info["score_full"]
-    x, mean, std = t["n_features"], t[f"{name}_mean"], t[f"{name}_std"].fillna(0)
-    signal = t[f"{name}_signal_ratio"]
-    fig = make_subplots(rows=1, cols=2, subplot_titles=(
-        f"{name} vs число признаков ({result.info['direction']})", "Доля полезного сигнала"))
+    t, info = result.table, result.info
+    name, full, sets = info["metric"], info["score_full"], info["eval_sets"]
+    x = t["n_features"]
+    labels = ["train (CV)"] + list(sets)
+    columns = [f"{name}_mean"] + [f"{name}_{k}" for k in sets]
+    delta_cols = [f"{name}_delta"] + [f"{name}_delta_{k}" for k in sets]
+    colors = ["#636EFA"] + [color(i + 1) for i in range(len(sets))]
+    reference = [full] + [info["score_full_eval"][k] for k in sets]
+    titles = (f"{name} vs число признаков ({info['direction']})",
+              f"Изменение {name} на шаге", "Доля полезного сигнала (CV)")
+    fig = make_subplots(rows=1, cols=3, subplot_titles=titles, horizontal_spacing=0.07)
+
+    std = t[f"{name}_std"].fillna(0)
+    mean = t[f"{name}_mean"]
     fig.add_scatter(x=pd.concat([x, x[::-1]]), y=pd.concat([mean + std, (mean - std)[::-1]]),
-                    fill="toself", line={"width": 0}, fillcolor="rgba(99,110,250,0.2)",
-                    name="±std", hoverinfo="skip", row=1, col=1)
-    fig.add_scatter(x=x, y=mean, mode="lines+markers", name=name, customdata=t["feature_changed"],
-                    hovertemplate="%{customdata}: %{y:.4f}<extra></extra>", row=1, col=1)
-    fig.add_hline(y=full, line_dash="dot", line_color="red", row=1, col=1,
-                  annotation_text=f"все признаки ({full:.4f})")
-    fig.add_scatter(x=x, y=signal, mode="lines+markers", name="signal ratio",
-                    line={"color": "#2ca02c"}, row=1, col=2)
-    fig.add_hline(y=0.95, line_dash="dash", line_color="orange", row=1, col=2,
+                    fill="toself", mode="lines", line={"width": 0},
+                    fillcolor="rgba(99,110,250,0.15)", name="±std (CV)", hoverinfo="skip",
+                    showlegend=False, row=1, col=1)
+    for label, col, dcol, c, ref in zip(labels, columns, delta_cols, colors, reference,
+                                        strict=True):
+        fig.add_scatter(x=x, y=t[col], mode="lines+markers", name=label, legendgroup=label,
+                        line={"color": c}, customdata=t["feature_changed"],
+                        hovertemplate=f"{label}, %{{customdata}}: %{{y:.4f}}<extra></extra>",
+                        row=1, col=1)
+        if not np.isnan(ref):
+            fig.add_hline(y=ref, line_dash="dot", line_color=c, opacity=0.5, row=1, col=1)
+        fig.add_bar(x=x, y=t[dcol], name=label, legendgroup=label, showlegend=False,
+                    marker_color=c, customdata=t["feature_changed"],
+                    hovertemplate=f"{label}, %{{customdata}}: %{{y:+.4f}}<extra></extra>",
+                    row=1, col=2)
+    fig.add_hline(y=0, line_color="black", line_width=1, row=1, col=2)
+    fig.add_scatter(x=x, y=t[f"{name}_signal_ratio"], mode="lines+markers", name="signal ratio",
+                    line={"color": "#2ca02c"}, showlegend=False, row=1, col=3)
+    fig.add_hline(y=0.95, line_dash="dash", line_color="orange", row=1, col=3,
                   annotation_text="95%")
+    fig.update_layout(barmode="group")
     fig.update_xaxes(title_text="число признаков")
-    return style(fig, "Incremental feature eval", height=450)
+    return style(fig, "Incremental feature eval", height=450, width=1500)
