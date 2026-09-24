@@ -94,3 +94,72 @@ def test_random_split_used_in_train(binary_df):
     s = random_split(binary_df, "target", test_size=0.2)
     m = train_model(s, ["x1"], params=FAST)
     assert m.features_ == ["x1"]
+
+
+class _FakeTask:
+    def __init__(self, name):
+        self.name = name
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+def test_experiment_versions_are_unique_and_listed(tmp_path):
+    e1, e2, e3 = (Experiment("p", root=tmp_path) for _ in range(3))
+    assert [e.version for e in (e1, e2, e3)] == [1, 2, 3]
+    e2.log_metrics({"auc": 0.6})
+    table = Experiment.list_versions("p", root=tmp_path)
+    assert list(table["version"]) == [1, 2, 3] and table.loc[1, "auc"] == 0.6
+    assert Experiment.list_versions("nothing", root=tmp_path).empty
+
+
+def test_experiment_explicit_version_protected_from_overwrite(tmp_path):
+    Experiment("p", root=tmp_path).log_metrics({"auc": 0.5})           # v_1 с данными
+    with pytest.raises(FileExistsError, match="v_1 уже существует"):
+        Experiment("p", root=tmp_path, version=1)
+    again = Experiment("p", root=tmp_path, version=1, overwrite=True)  # осознанная перезапись
+    assert again.version == 1
+    fresh = Experiment("p", root=tmp_path, version=7)                  # новой явной версии можно
+    assert fresh.path.name == "v_7"
+
+
+def test_experiment_closes_previous_clearml_task(tmp_path, monkeypatch):
+    """Повторный запуск в одном ядре: старая задача закрывается до Task.init новой."""
+    calls, state = [], {"task": _FakeTask("v_1")}
+    monkeypatch.setattr(cml, "current_task", lambda: state["task"])
+
+    def fake_init(project, name, **kw):
+        calls.append(("init", name, state["task"].closed))
+        state["task"] = _FakeTask(name)
+        return state["task"]
+
+    monkeypatch.setattr(cml, "init_task", fake_init)
+    old = state["task"]
+    exp = Experiment("p", root=tmp_path, clearml=True)
+    assert old.closed and calls == [("init", "v_1", True)]  # init произошёл после close
+    exp.close()
+    exp.close()  # повторный close безопасен
+    assert state["task"].closed
+
+
+def test_experiment_failed_clearml_init_leaves_no_folder(tmp_path, monkeypatch):
+    monkeypatch.setattr(cml, "current_task", lambda: None)
+
+    def broken(*a, **kw):
+        raise RuntimeError("сервер недоступен")
+
+    monkeypatch.setattr(cml, "init_task", broken)
+    with pytest.raises(RuntimeError):
+        Experiment("p", root=tmp_path, clearml=True)
+    assert not (tmp_path / "p" / "v_1").exists()   # пустая папка версии не остаётся
+    assert Experiment("p", root=tmp_path).version == 1  # и номер не «сгорел»
+
+
+def test_experiment_context_manager(tmp_path, monkeypatch):
+    task = _FakeTask("v_1")
+    monkeypatch.setattr(cml, "current_task", lambda: None)
+    monkeypatch.setattr(cml, "init_task", lambda *a, **k: task)
+    with Experiment("p", root=tmp_path, clearml=True) as exp:
+        exp.log_metrics({"x": 1})
+    assert task.closed and exp.task is None

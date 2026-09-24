@@ -2,13 +2,15 @@
 
 Пример::
 
-    exp = Experiment("RTK_model", root="/workdir", version="auto", clearml=True)
-    exp.log_params(params)
-    exp.save_features(features, cat_features=cats, target="target")
-    exp.save_model(model)
-    exp.log_metrics({"auc_test": 0.63})
-    exp.save_result(rfe_result)
-    exp.save_figure(fig, "gain_chart")
+    with Experiment("RTK_model", root="/workdir", clearml=True) as exp:   # v_1, v_2, ...
+        exp.log_params(params)
+        exp.save_features(features, cat_features=cats, target="target")
+        exp.save_model(model)
+        exp.log_metrics({"auc_test": 0.63})
+        exp.save_result(rfe_result)
+        exp.save_figure(fig, "gain_chart")
+
+    Experiment.list_versions("RTK_model", root="/workdir")   # все версии и их метрики
 
 Структура на диске::
 
@@ -49,13 +51,27 @@ class Experiment:
     root : str | Path
         Корень, где создаётся ``<project>/v_<N>``.
     version : int | str
-        Номер версии или ``"auto"`` — следующая свободная.
+        ``"auto"`` — следующая свободная версия (максимальный ``v_N`` в папке проекта + 1).
+        Число — конкретная версия; если папка ``v_N`` уже содержит данные, будет
+        ``FileExistsError`` (защита от случайной перезаписи), либо передайте ``overwrite=True``.
     name : str, optional
         Имя задачи в ClearML (по умолчанию ``v_<N>``).
     clearml : bool
-        Создать задачу ClearML и дублировать туда всё, что логируется.
+        Создать задачу ClearML и дублировать туда всё, что логируется. Если в этом процессе
+        (например, в том же ноутбуке) уже есть активная задача ClearML — она закрывается
+        автоматически, поэтому ячейку можно перезапускать.
     clearml_offline : bool
         Режим ClearML без сервера.
+    overwrite : bool
+        Разрешить использовать уже существующую версию (файлы могут быть перезаписаны).
+
+    Версионирование
+    ---------------
+    Локально версия — это папка ``<root>/<project>/v_<N>``; номер выдаётся один раз при
+    создании ``Experiment`` и не переиспользуется. В ClearML версия — имя задачи ``v_<N>``,
+    а идентичность задачи — её id: одинаковые имена в разных запусках допустимы, поэтому
+    номер ``N`` берётся из локальных папок и совпадает в обоих местах. Список версий:
+    :meth:`Experiment.list_versions`.
     """
 
     def __init__(
@@ -68,24 +84,56 @@ class Experiment:
         clearml: bool = False,
         clearml_offline: bool = False,
         tags: list[str] | None = None,
+        overwrite: bool = False,
     ):
         self.project = project
         project_dir = Path(root) / project
         project_dir.mkdir(parents=True, exist_ok=True)
         self.version = _next_version(project_dir) if version == "auto" else int(version)
         self.path = project_dir / f"v_{self.version}"
+        if self.path.exists() and any(self.path.iterdir()) and not overwrite:
+            raise FileExistsError(
+                f"Версия v_{self.version} уже существует: {self.path}. Используйте "
+                f"version='auto' для новой версии или overwrite=True, чтобы перезаписать."
+            )
         self.models_path = self.path / "models"
         self.logs_path = self.path / "logs"
-        self.models_path.mkdir(parents=True, exist_ok=True)
-        self.logs_path.mkdir(parents=True, exist_ok=True)
         self.meta: dict[str, Any] = {"project": project, "version": self.version,
                                      "created": datetime.now().isoformat(timespec="seconds"),
                                      "params": {}, "metrics": {}}
         self.task = None
         if clearml:
+            # сначала ClearML: при ошибке не остаётся пустой локальной папки версии
+            previous = cml.close_current_task()
+            if previous:
+                print(f"[collection_lab] закрыта активная задача ClearML {previous!r} "
+                      f"(одна активная задача на процесс)")
             self.task = cml.init_task(project, name or f"v_{self.version}", tags=tags,
                                       offline=clearml_offline)
+        self.models_path.mkdir(parents=True, exist_ok=True)
+        self.logs_path.mkdir(parents=True, exist_ok=True)
         self._dump_meta()
+
+    def __enter__(self) -> Experiment:
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    @staticmethod
+    def list_versions(project: str, root: str | Path = "experiments") -> pd.DataFrame:
+        """Таблица версий проекта: ``version, created, path`` + метрики из ``meta.json``."""
+        rows = []
+        for p in sorted((Path(root) / project).glob("v_*")):
+            if not (m := re.fullmatch(r"v_(\d+)", p.name)) or not (p / "meta.json").exists():
+                continue
+            with open(p / "meta.json", encoding="utf-8") as f:
+                meta = json.load(f)
+            rows.append({"version": int(m.group(1)), "created": meta.get("created"),
+                         "path": str(p), **meta.get("metrics", {})})
+        if not rows:
+            return pd.DataFrame(columns=["version", "created", "path"])
+        return pd.DataFrame(rows).sort_values("version", ignore_index=True)
 
     # --- служебное ---------------------------------------------------------------------
     def _dump_meta(self) -> None:
@@ -165,7 +213,7 @@ class Experiment:
         return path
 
     def close(self) -> None:
-        """Завершить задачу ClearML (локальные файлы уже сохранены)."""
+        """Завершить задачу ClearML (локальные файлы уже сохранены). Можно вызывать повторно."""
         if self.task is not None:
             self.task.close()
             self.task = None

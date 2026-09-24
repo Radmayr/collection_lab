@@ -30,6 +30,20 @@ def current_task():
     return Task.current_task()
 
 
+def close_current_task() -> str | None:
+    """Закрывает активную задачу ClearML этого процесса (если есть) и возвращает её имя.
+
+    ClearML допускает одну активную задачу на процесс: повторный ``Task.init`` с другим
+    именем без закрытия предыдущей падает с ``UsageError``.
+    """
+    task = current_task()
+    if task is None:
+        return None
+    name = task.name
+    task.close()
+    return name
+
+
 def init_task(project: str, name: str, *, tags: list[str] | None = None, offline: bool = False,
               **kwargs: Any):
     """Создаёт задачу ClearML (``offline=True`` — без сервера, архив сохраняется локально)."""
