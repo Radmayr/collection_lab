@@ -237,6 +237,9 @@ def gain_chart(
                       margin={"t": 100, "b": 50, "l": 50, "r": 50})
 
     name = plots_nm[0] if plots_nm else f"gain_chart_{logit_name}".strip().replace(" ", "_")
+    from collection_lab.tracking.experiment import auto_figure
+
+    auto_figure(fig, name)
     if save_plot:
         Path(path_to_save).mkdir(parents=True, exist_ok=True)
         fig.write_html(Path(path_to_save) / f"{name}.html")

@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import warnings
@@ -35,6 +36,20 @@ import pandas as pd
 from collection_lab.core.results import Result, _jsonable
 from collection_lab.tracking import clearml as cml
 from collection_lab.utils.io import write_csv
+
+_SUPPRESS = 0  # >0 — внутри явной отправки (save_*): перехват .plot() отключён (без дублей)
+
+
+@contextlib.contextmanager
+def _no_capture():
+    """Отключает автоперехват графиков на время явной отправки через ``save_*``/``.save()``."""
+    global _SUPPRESS
+    _SUPPRESS += 1
+    try:
+        yield
+    finally:
+        _SUPPRESS -= 1
+
 
 _CURRENT: Experiment | None = None  # активный эксперимент с ClearML (для авто-отправки из .save())
 
@@ -55,7 +70,9 @@ def _send_to_clearml(obj, name: str) -> int:
     def figure(make, title: str) -> None:
         nonlocal sent
         try:
-            sent += bool(cml.report_figure(make(), title))
+            with _no_capture():
+                fig = make()
+            sent += bool(cml.report_figure(fig, title))
         except Exception as e:  # noqa: BLE001 — график необязателен, но ошибку показываем
             warnings.warn(f"График {title!r} не отправлен в ClearML: {type(e).__name__}: {e}",
                           RuntimeWarning, stacklevel=4)
@@ -77,6 +94,18 @@ def _send_to_clearml(obj, name: str) -> int:
         for key, res in obj.results_.items():
             sent += _send_to_clearml(res, f"{name}_{key}")
     return sent
+
+
+def auto_figure(fig, name: str) -> None:
+    """Вызывается из ``.plot()``/``plot_stab``/``gain_chart``: при активном
+    ``Experiment(capture_plots=True)`` отправляет график в ClearML (повторные имена получают
+    суффикс ``_2``, ``_3``…), иначе ничего не делает."""
+    exp = Experiment.current()
+    if exp is None or not exp.capture_plots or _SUPPRESS:
+        return
+    n = exp._capture_counts.get(name, 0) + 1
+    exp._capture_counts[name] = n
+    cml.report_figure(fig, name if n == 1 else f"{name}_{n}")
 
 
 def auto_send(obj, name: str) -> None:
@@ -119,6 +148,10 @@ class Experiment:
         Режим ClearML без сервера.
     overwrite : bool
         Разрешить использовать уже существующую версию (файлы могут быть перезаписаны).
+    capture_plots : bool
+        Автоматически отправлять в ClearML графики, которые строят ``Result.plot()``,
+        ``SelectionPipeline.plot()``, ``plot_stab`` и ``gain_chart`` (пока эксперимент
+        активен) — без явного ``save_figure``.
 
     Версионирование
     ---------------
@@ -140,6 +173,7 @@ class Experiment:
         clearml_offline: bool = False,
         tags: list[str] | None = None,
         overwrite: bool = False,
+        capture_plots: bool = False,
     ):
         self.project = project
         project_dir = Path(root) / project
@@ -159,9 +193,25 @@ class Experiment:
         self.task = None
         self._watch = None
         self._summary_printed = False
+        self.capture_plots = capture_plots
+        self._capture_counts: dict[str, int] = {}
+        self._in_with = False
+        self._successor: Experiment | None = None
         cml.reset_reported_plots()  # журнал отправок графиков — на каждый эксперимент свой
         if clearml:
             # сначала ClearML: при ошибке не остаётся пустой локальной папки версии
+            prev = Experiment.current()
+            if prev is not None:
+                if prev._in_with:
+                    warnings.warn(
+                        "Experiment создаётся внутри блока with другого Experiment "
+                        f"(v_{prev.version}): предыдущий закрывается. Используйте один Experiment "
+                        "на запуск — не вызывайте Experiment(...) внутри `with ... as exp:`.",
+                        RuntimeWarning, stacklevel=2)
+                prev._successor = self
+                prev.close(quiet=True)
+                print(f"[collection_lab] закрыт предыдущий эксперимент v_{prev.version} "
+                      f"(одна активная задача ClearML на процесс)")
             previous = cml.close_current_task()
             if previous:
                 print(f"[collection_lab] закрыта активная задача ClearML {previous!r} "
@@ -182,10 +232,16 @@ class Experiment:
         return exp if exp is not None and exp.task is not None else None
 
     def __enter__(self) -> Experiment:
+        self._in_with = True
         return self
 
     def __exit__(self, *exc) -> None:
+        self._in_with = False
         self.close()
+        successor = self._successor           # Experiment, созданные внутри этого with
+        while successor is not None:
+            successor.close()
+            successor = successor._successor
 
     @staticmethod
     def list_versions(project: str, root: str | Path = "experiments") -> pd.DataFrame:
@@ -267,7 +323,9 @@ class Experiment:
         cml.report_table(result.table.head(1000), title=prefix)
         if result.plotter is not None:
             try:
-                self.save_figure(result.plot(), prefix)
+                with _no_capture():
+                    fig = result.plot()
+                self.save_figure(fig, prefix)
             except Exception as e:  # noqa: BLE001 — график необязателен, но ошибку показываем
                 warnings.warn(f"График результата {prefix!r} не сохранён: "
                               f"{type(e).__name__}: {e}", RuntimeWarning, stacklevel=2)
@@ -299,7 +357,9 @@ class Experiment:
         """
         self.save_table(pipe.summary(), f"{name}_summary")
         self.save_table(pipe.log_, f"{name}_log")
-        self.save_figure(pipe.plot(), f"{name}_funnel")
+        with _no_capture():
+            funnel = pipe.plot()
+        self.save_figure(funnel, f"{name}_funnel")
         for key, result in pipe.results_.items():
             self.save_result(result, f"{name}_{key}")
         return self.logs_path

@@ -181,7 +181,11 @@ class SelectionPipeline:
         labels = ["вход"] + s["step"].tolist()
         values = [int(s["n_in"].iloc[0])] + s["n_out"].tolist() if len(s) else []
         fig = go.Figure(go.Funnel(y=labels, x=values, textinfo="value+percent initial"))
-        return style(fig, "Отбор признаков по шагам", height=120 + 60 * len(labels))
+        fig = style(fig, "Отбор признаков по шагам", height=120 + 60 * len(labels))
+        from collection_lab.tracking.experiment import auto_figure
+
+        auto_figure(fig, "selection_funnel")
+        return fig
 
     def save(self, directory, *, to_clearml: bool | None = None) -> None:
         """Сохраняет результаты всех шагов и общий лог в папку.

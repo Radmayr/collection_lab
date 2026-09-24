@@ -307,6 +307,10 @@ def plot_stab(
 
     figs = [fig1, fig2]
     names = plots_nm or [f"stab_{feature_nm}_1", f"stab_{feature_nm}_2"]
+    from collection_lab.tracking.experiment import auto_figure
+
+    for fig, name in zip(figs, names, strict=False):
+        auto_figure(fig, name)
     if save_plot:
         Path(path_to_save).mkdir(parents=True, exist_ok=True)
         for fig, name in zip(figs, names, strict=False):

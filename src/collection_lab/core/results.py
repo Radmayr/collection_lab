@@ -74,7 +74,11 @@ class Result:
         """Строит plotly-график результата."""
         if self.plotter is None:
             raise NotImplementedError(f"Для {self.name!r} график не предусмотрен.")
-        return self.plotter(self, **kwargs)
+        fig = self.plotter(self, **kwargs)
+        from collection_lab.tracking.experiment import auto_figure
+
+        auto_figure(fig, self.name)
+        return fig
 
     def save(self, directory: str | Path, prefix: str | None = None, *,
              to_clearml: bool | None = None) -> Path:

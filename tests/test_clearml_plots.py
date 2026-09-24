@@ -82,6 +82,7 @@ def fake_clearml(monkeypatch):
         holder["task"] = task
         def init(*a, **k):
             task.active = True
+            task.closed = False        # каждый Task.init даёт «новую» задачу
             return task
 
         monkeypatch.setattr(cml, "current_task",
@@ -399,3 +400,82 @@ def test_current_experiment_is_cleared_on_close(tmp_path, fake_clearml):
     assert Experiment.current() is exp
     exp.close()
     assert Experiment.current() is None
+
+
+def test_nested_experiment_inside_with_is_handled(tmp_path, fake_clearml, capsys):
+    """Ячейка пользователя: Experiment(...) создаётся ещё раз внутри `with ... as exp:`."""
+    fake_clearml()
+    with pytest.warns(RuntimeWarning, match="внутри блока with"):
+        with Experiment("p", root=tmp_path, clearml=True) as exp:
+            first = exp
+            exp = Experiment("p", root=tmp_path, clearml=True)      # повторное создание
+            exp.save_figure(go.Figure(go.Scatter(y=[1, 2])), "fig")
+            second = exp
+    assert first is not second and first.task is None
+    assert second.task is None                     # выход из with закрыл и вторую тоже
+    assert Experiment.current() is None
+    out = capsys.readouterr().out
+    assert "закрыт предыдущий эксперимент v_1" in out
+    assert "отправлено 1 из 1" in out              # итог второго эксперимента напечатан
+
+
+def test_second_experiment_after_cell_rerun_closes_previous(tmp_path, fake_clearml, capsys):
+    fake_clearml()
+    first = Experiment("p", root=tmp_path, clearml=True)
+    second = Experiment("p", root=tmp_path, clearml=True)        # перезапуск ячейки, без close()
+    assert first.task is None and second.task is not None
+    assert Experiment.current() is second
+    second.close()
+
+
+def test_capture_plots_sends_plot_figures_automatically(tmp_path, fake_clearml, binary_df):
+    from collection_lab.metrics import gain_chart, prob_to_logit
+    from collection_lab.selection import QualityFilter, SelectionPipeline, rfe
+    from collection_lab.validation import plot_stab
+
+    task = fake_clearml()
+    res = rfe(binary_df, binary_df["target"], ["x1", "noise"], n_splits=2, params=FAST,
+              verbose=False)
+    pipe = SelectionPipeline([QualityFilter()]).fit(
+        binary_df, "target", ["x1", "x2", "const"], verbose=False)
+    lg = prob_to_logit(np.clip((binary_df["x1"] + 3) / 6, 0.01, 0.99))
+    with Experiment("p", root=tmp_path, clearml=True, capture_plots=True):
+        res.plot()
+        res.plot()                                               # повтор — суффикс _2
+        pipe.plot()
+        plot_stab(binary_df["x1"], binary_df["target"], binary_df["report_date"], 4,
+                  feature_nm="x1", period="Q", return_plotly_fig=True)
+        gain_chart(lg, binary_df["target"], n_buckets=5, logit_name="Model X",
+                   return_plotly_fig=True)
+    sent = [t for t, _ in task.logger.reported]
+    assert sent.count("rfe") == 1 and "rfe_2" in sent
+    assert {"selection_funnel", "stab_x1_1", "stab_x1_2", "gain_chart_Model_X"} <= set(sent)
+
+
+def test_plots_are_not_sent_without_capture_plots(tmp_path, fake_clearml, binary_df):
+    from collection_lab.selection import rfe
+
+    task = fake_clearml()
+    res = rfe(binary_df, binary_df["target"], ["x1", "noise"], n_splits=2, params=FAST,
+              verbose=False)
+    with Experiment("p", root=tmp_path, clearml=True):
+        res.plot()                                               # по умолчанию — не отправляется
+    assert task.logger.reported == []
+    res.plot()                                                   # вне эксперимента — тоже нет
+
+
+def test_capture_plots_does_not_duplicate_on_explicit_save(tmp_path, fake_clearml, binary_df):
+    """.plot() (перехват) и затем .save()/save_pipeline не должны слать один график дважды."""
+    from collection_lab.selection import QualityFilter, SelectionPipeline
+
+    task = fake_clearml()
+    pipe = SelectionPipeline([QualityFilter()]).fit(
+        binary_df, "target", ["x1", "x2", "const"], verbose=False)
+    with Experiment("p", root=tmp_path, clearml=True, capture_plots=True) as exp:
+        pipe.plot()                              # перехват: selection_funnel
+        exp.save_pipeline(pipe)                  # явная отправка: воронка и результаты шагов
+        pipe.save(exp.logs_path / "sel")         # авто-отправка из .save()
+    titles = [t for t, _ in task.logger.reported]
+    assert not any(t.endswith("_2") for t in titles), titles     # суффиксов-дублей нет
+    assert titles.count("selection_1_quality_filter") == 1       # save_pipeline: шаг один раз
+    assert "sel_1_quality_filter" in titles and "sel_funnel" in titles   # .save(): своё имя
