@@ -77,8 +77,11 @@ class ModelReport:
         path.write_text("\n".join(parts), encoding="utf-8")
         return path
 
-    def save(self, directory: str | Path) -> Path:
-        """Таблицы в csv + ``report.html`` в папку."""
+    def save(self, directory: str | Path, *, to_clearml: bool | None = None) -> Path:
+        """Таблицы в csv + ``report.html`` в папку.
+
+        ``to_clearml``: ``None`` — дублировать в ClearML при активном ``Experiment(clearml=True)``.
+        """
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
         for name in ("metrics", "calibration", "segments", "feature_psi", "dynamics"):
@@ -86,6 +89,9 @@ class ModelReport:
             if obj is not None:
                 write_csv(obj, directory / f"report_{name}.csv", index=True)
         self.to_html(directory / "report.html")
+        from collection_lab.core.results import _maybe_send
+
+        _maybe_send(self, directory.name or "report", to_clearml)
         return directory
 
 

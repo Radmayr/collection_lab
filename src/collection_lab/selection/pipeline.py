@@ -183,13 +183,19 @@ class SelectionPipeline:
         fig = go.Figure(go.Funnel(y=labels, x=values, textinfo="value+percent initial"))
         return style(fig, "Отбор признаков по шагам", height=120 + 60 * len(labels))
 
-    def save(self, directory) -> None:
-        """Сохраняет результаты всех шагов и общий лог в папку."""
+    def save(self, directory, *, to_clearml: bool | None = None) -> None:
+        """Сохраняет результаты всех шагов и общий лог в папку.
+
+        ``to_clearml``: ``None`` — дублировать в ClearML при активном ``Experiment(clearml=True)``.
+        """
         from pathlib import Path
 
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
         for key, res in self.results_.items():
-            res.save(directory, prefix=key)
+            res.save(directory, prefix=key, to_clearml=False)
         write_csv(self.log_, directory / "selection_log.csv")
         write_csv(self.summary(), directory / "selection_summary.csv")
+        from collection_lab.core.results import _maybe_send
+
+        _maybe_send(self, directory.name or "selection", to_clearml)

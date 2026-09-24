@@ -36,6 +36,59 @@ from collection_lab.core.results import Result, _jsonable
 from collection_lab.tracking import clearml as cml
 from collection_lab.utils.io import write_csv
 
+_CURRENT: Experiment | None = None  # активный эксперимент с ClearML (для авто-отправки из .save())
+
+
+def _send_to_clearml(obj, name: str) -> int:
+    """Отправляет в ClearML таблицы и графики объекта (без записи на диск); возвращает число
+    отправленных элементов. Поддерживаются Result, ModelReport, SelectionPipeline."""
+    from collection_lab.selection.pipeline import SelectionPipeline
+    from collection_lab.validation.report import ModelReport
+
+    sent = 0
+
+    def table(df: pd.DataFrame, title: str) -> None:
+        nonlocal sent
+        has_index = not isinstance(df.index, pd.RangeIndex)
+        sent += bool(cml.report_table((df.reset_index() if has_index else df).head(1000), title))
+
+    def figure(make, title: str) -> None:
+        nonlocal sent
+        try:
+            sent += bool(cml.report_figure(make(), title))
+        except Exception as e:  # noqa: BLE001 — график необязателен, но ошибку показываем
+            warnings.warn(f"График {title!r} не отправлен в ClearML: {type(e).__name__}: {e}",
+                          RuntimeWarning, stacklevel=4)
+
+    if isinstance(obj, Result):
+        table(obj.table, name)
+        if obj.plotter is not None:
+            figure(obj.plot, name)
+    elif isinstance(obj, ModelReport):
+        for key in ("metrics", "calibration", "segments", "feature_psi", "dynamics"):
+            if getattr(obj, key) is not None:
+                table(getattr(obj, key), f"{name}_{key}")
+        for key, fig in obj.figures.items():
+            figure(lambda fig=fig: fig, f"{name}_{key}")
+    elif isinstance(obj, SelectionPipeline):
+        table(obj.summary(), f"{name}_summary")
+        table(obj.log_, f"{name}_log")
+        figure(obj.plot, f"{name}_funnel")
+        for key, res in obj.results_.items():
+            sent += _send_to_clearml(res, f"{name}_{key}")
+    return sent
+
+
+def auto_send(obj, name: str) -> None:
+    """Вызывается из ``.save()`` результатов: если есть активный Experiment с ClearML —
+    дублирует результат в ClearML (и печатает об этом строку)."""
+    exp = Experiment.current()
+    if exp is None:
+        return
+    n = _send_to_clearml(obj, name)
+    print(f"[collection_lab] {type(obj).__name__}.save: в ClearML отправлено {n} "
+          f"(активный эксперимент v_{exp.version}, '{name}')")
+
 
 def _next_version(project_dir: Path) -> int:
     versions = [int(m.group(1)) for p in project_dir.glob("v_*")
@@ -116,9 +169,17 @@ class Experiment:
             self.task = cml.init_task(project, name or f"v_{self.version}", tags=tags,
                                       offline=clearml_offline)
             self._watch = cml.ErrorWatch().start()  # ошибки ClearML в фоне: покажем при close()
+            global _CURRENT
+            _CURRENT = self
         self.models_path.mkdir(parents=True, exist_ok=True)
         self.logs_path.mkdir(parents=True, exist_ok=True)
         self._dump_meta()
+
+    @staticmethod
+    def current() -> Experiment | None:
+        """Активный эксперимент с ClearML (``clearml=True``, ещё не закрыт) или ``None``."""
+        exp = _CURRENT
+        return exp if exp is not None and exp.task is not None else None
 
     def __enter__(self) -> Experiment:
         return self
@@ -202,7 +263,7 @@ class Experiment:
     def save_result(self, result: Result, name: str | None = None) -> Path:
         """Результат анализа/отбора (таблица + selected + info) и его график, если есть."""
         prefix = name or result.name
-        result.save(self.logs_path, prefix=prefix)
+        result.save(self.logs_path, prefix=prefix, to_clearml=False)
         cml.report_table(result.table.head(1000), title=prefix)
         if result.plotter is not None:
             try:
@@ -230,7 +291,7 @@ class Experiment:
                 self.save_table(table.reset_index() if has_index else table, f"{name}_{key}")
         for key, fig in report.figures.items():
             self.save_figure(fig, f"{name}_{key}")
-        return report.save(self.logs_path / name)
+        return report.save(self.logs_path / name, to_clearml=False)
 
     def save_pipeline(self, pipe, name: str = "selection") -> Path:
         """Пайплайн отбора признаков (:class:`~collection_lab.selection.SelectionPipeline`):
@@ -310,6 +371,9 @@ class Experiment:
         self._summary_printed = True
         self.task.close()
         self.task = None
+        global _CURRENT
+        if _CURRENT is self:
+            _CURRENT = None
         if self._watch is not None:
             self._watch.stop()
             self._watch.warn()

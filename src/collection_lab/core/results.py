@@ -25,6 +25,17 @@ def _jsonable(value: Any) -> Any:
     return str(value)
 
 
+def _maybe_send(obj, name: str, to_clearml: bool | None) -> None:
+    """Отправка в ClearML из ``.save()``: авто (активный Experiment) или по флагу."""
+    if to_clearml is False:
+        return
+    from collection_lab.tracking.experiment import Experiment, auto_send
+
+    if to_clearml is None and Experiment.current() is None:
+        return
+    auto_send(obj, name)
+
+
 @dataclass
 class Result:
     """Результат функции анализа или отбора.
@@ -65,8 +76,13 @@ class Result:
             raise NotImplementedError(f"Для {self.name!r} график не предусмотрен.")
         return self.plotter(self, **kwargs)
 
-    def save(self, directory: str | Path, prefix: str | None = None) -> Path:
-        """Сохраняет таблицу (csv), список признаков и info (json) в ``directory``."""
+    def save(self, directory: str | Path, prefix: str | None = None, *,
+             to_clearml: bool | None = None) -> Path:
+        """Сохраняет таблицу (csv), список признаков и info (json) в ``directory``.
+
+        ``to_clearml``: ``None`` — дублировать в ClearML, если есть активный
+        ``Experiment(clearml=True)``; ``True``/``False`` — принудительно.
+        """
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
         prefix = prefix or self.name
@@ -74,6 +90,7 @@ class Result:
         meta = {"name": self.name, "selected": self.selected, "info": _jsonable(self.info)}
         with open(directory / f"{prefix}.json", "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
+        _maybe_send(self, prefix, to_clearml)
         return directory
 
     def __repr__(self) -> str:

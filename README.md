@@ -55,11 +55,11 @@ with cl.tracking.Experiment("RTK_model", clearml=True) as exp:
     exp.save_report(report)      # метрики, калибровка, gain chart, важности, динамика
 ```
 
-> **Что уходит в ClearML.** Только то, что отправлено через `exp`: `save_pipeline`,
-> `save_report`, `save_result`, `save_figure`, `save_table`, `log` (универсальный, тип
-> определяется сам). Методы `.save()` у `Result`, `SelectionPipeline`, `ModelReport` пишут
-> только файлы на диск. Что произошло с каждым графиком — `exp.plots_summary()` и итоговая
-> строка при `close()`.
+> **Что уходит в ClearML.** Всё, что отправлено через `exp`: `save_pipeline`, `save_report`,
+> `save_result`, `save_figure`, `save_table`, `log` (универсальный, тип определяется сам).
+> Внутри активного `Experiment(clearml=True)` то же делают `.save(dir)` у `Result`,
+> `SelectionPipeline`, `ModelReport` (`to_clearml=False` — только диск). Что произошло с каждым
+> графиком — `exp.plots_summary()` и итоговая строка при `close()`.
 
 Полный пример на реальных данных — [examples/rtk_pipeline.ipynb](examples/rtk_pipeline.ipynb).
 

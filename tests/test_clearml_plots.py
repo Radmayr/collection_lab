@@ -326,3 +326,76 @@ def test_experiment_log_dispatches_by_type(tmp_path, fake_clearml, binary_df):
             exp.log(object())
     sent = {t for t, _ in task.logger.reported}
     assert {"quality_filter", "fig"} <= sent
+
+
+def _fitted_objects(binary_df):
+    from collection_lab.data import time_split
+    from collection_lab.modeling import train_model
+    from collection_lab.selection import QualityFilter, SelectionPipeline
+    from collection_lab.validation import model_report
+
+    split = time_split(binary_df, "target", "report_date", oot_from="2024-03-01")
+    model = train_model(split, ["x1", "x2", "cat", "noise"], params=FAST)
+    report = model_report(model, split, date_col="report_date", n_buckets=10)
+    pipe = SelectionPipeline([QualityFilter()]).fit(
+        split.train, "target", ["x1", "x2", "noise", "const"], verbose=False)
+    return report, pipe
+
+
+def test_save_auto_sends_to_clearml_when_experiment_is_active(tmp_path, fake_clearml, binary_df,
+                                                              capsys):
+    """Как в примере пользователя: report.save()/pipe.save() внутри Experiment(clearml=True)."""
+    task = fake_clearml()
+    report, pipe = _fitted_objects(binary_df)
+    with Experiment("p", root=tmp_path, clearml=True) as exp:
+        report.save(exp.logs_path / "report")
+        pipe.save(exp.logs_path / "selection")
+        table = exp.plots_summary()
+    out = capsys.readouterr().out
+    assert "ModelReport.save: в ClearML отправлено" in out
+    assert "SelectionPipeline.save: в ClearML отправлено" in out
+    sent = {t for t, _ in task.logger.reported}
+    assert {"report_gain_charts", "report_feature_importance", "selection_funnel"} <= sent
+    assert {"report_metrics", "selection_summary", "selection_log"} <= set(table["title"])
+    assert (exp.logs_path / "report" / "report.html").exists()          # локальные файлы тоже
+
+
+def test_save_does_not_touch_clearml_without_active_experiment(tmp_path, fake_clearml, binary_df,
+                                                               capsys):
+    task = fake_clearml()                                  # задача есть, но Experiment не создан
+    report, _ = _fitted_objects(binary_df)
+    report.save(tmp_path / "report")
+    assert task.logger.reported == [] and task.logger.tables == []
+    assert "в ClearML отправлено" not in capsys.readouterr().out
+
+
+def test_save_to_clearml_flag_overrides(tmp_path, fake_clearml, binary_df):
+    task = fake_clearml()
+    report, _ = _fitted_objects(binary_df)
+    with Experiment("p", root=tmp_path, clearml=True) as exp:
+        report.save(tmp_path / "off", to_clearml=False)    # явно выключено
+        assert task.logger.reported == []
+        report.save(tmp_path / "on", to_clearml=True)      # явно включено
+        assert {"on_gain_charts"} <= {t for t, _ in task.logger.reported}
+        assert exp.task is not None
+
+
+def test_experiment_methods_do_not_double_send(tmp_path, fake_clearml, binary_df):
+    """save_report/save_pipeline уже шлют сами — внутренний .save не должен дублировать."""
+    task = fake_clearml()
+    report, pipe = _fitted_objects(binary_df)
+    with Experiment("p", root=tmp_path, clearml=True) as exp:
+        exp.save_report(report)
+        exp.save_pipeline(pipe)
+    titles = [t for t, _ in task.logger.reported]
+    assert titles.count("report_gain_charts") == 1
+    assert titles.count("selection_funnel") == 1
+
+
+def test_current_experiment_is_cleared_on_close(tmp_path, fake_clearml):
+    fake_clearml()
+    assert Experiment.current() is None
+    exp = Experiment("p", root=tmp_path, clearml=True)
+    assert Experiment.current() is exp
+    exp.close()
+    assert Experiment.current() is None
