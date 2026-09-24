@@ -23,7 +23,11 @@ from collection_lab.config import (
     LGBM_PARAMS,
     merge_params,
 )
-from collection_lab.data.types import detect_categorical, normalize_missing, to_numeric_frame
+from collection_lab.data.types import (
+    category_strings,
+    detect_categorical,
+    to_numeric_frame,
+)
 
 TASKS = ("binary", "regression")
 
@@ -50,8 +54,7 @@ class FeaturePreparer:
         self.cat_features_ = [c for c in cats if c in X.columns]
         self.categories_ = {}
         for c in self.cat_features_:
-            values = normalize_missing(X[c]).dropna().astype(str)
-            self.categories_[c] = sorted(values.unique())
+            self.categories_[c] = sorted(category_strings(X[c]).dropna().unique())
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -60,9 +63,7 @@ class FeaturePreparer:
             raise KeyError(f"В данных нет признаков: {missing}")
         out = to_numeric_frame(X[self.features_], cat_cols=self.cat_features_)
         for c in self.cat_features_:
-            s = normalize_missing(out[c])
-            s = s.where(s.isna(), s.astype(str))
-            out[c] = pd.Categorical(s, categories=self.categories_[c])
+            out[c] = pd.Categorical(category_strings(out[c]), categories=self.categories_[c])
         return out
 
     def fit_transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -150,6 +151,17 @@ class BaseModel:
         self._check_fitted()
         values = self._importance(kind)
         return pd.Series(values, index=self.features_, name=kind).sort_values(ascending=False)
+
+    def export(self, directory, *, X_check=None, atol: float = 1e-6):
+        """Выгружает модель для инференса без библиотеки: нативный файл модели,
+        ``preprocessing.json`` и автономный ``inference.py``
+        (см. :mod:`collection_lab.core.export`).
+
+        ``X_check`` — данные для проверки: предсказания скрипта сравниваются с библиотекой.
+        """
+        from collection_lab.core.export import export_model
+
+        return export_model(self, directory, X_check=X_check, atol=atol)
 
     @property
     def n_iterations_(self) -> int:

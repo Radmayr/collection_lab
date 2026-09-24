@@ -305,6 +305,15 @@ class Experiment:
         cml.upload_artifact(name, str(path))
         return path
 
+    def export_model(self, model, name: str = "model", *, X_check=None) -> dict[str, Any]:
+        """Выгрузка модели для инференса без библиотеки в ``<версия>/export/<name>/`` и (при
+        ClearML) артефактом в задачу: нативная модель, ``preprocessing.json``, ``inference.py``,
+        ``requirements.txt``. ``X_check`` — данные для сверки предсказаний.
+        """
+        info = model.export(self.path / "export" / name, X_check=X_check)
+        cml.upload_artifact(f"{name}_export", str(info["directory"]))
+        return info
+
     def load_model(self, name: str = "model") -> Any:
         return joblib.load(self.models_path / f"{name}.pkl")
 

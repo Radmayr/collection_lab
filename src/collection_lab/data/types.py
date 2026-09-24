@@ -24,6 +24,27 @@ def normalize_missing(s: pd.Series) -> pd.Series:
     return s.mask(s.isin(MISSING_TOKENS))
 
 
+def category_strings(s: pd.Series) -> pd.Series:
+    """Значения категориального признака как строки (пропуски → NaN).
+
+    Числовые категории приводятся к каноничному виду: ``1`` и ``1.0`` дают ``"1"``. Так код
+    категории не зависит от того, стал ли столбец из-за пропусков ``float`` вместо ``int`` —
+    на обучении и на инференсе строки совпадают.
+    """
+    s = normalize_missing(s)
+    notna = s.notna()
+    values = s[notna]
+    if is_numeric_dtype(values) and not is_bool_dtype(values):
+        f = values.astype("float64")
+        mapping = {v: (str(int(v)) if v == int(v) else str(v)) for v in pd.unique(f)}
+        strings = f.map(mapping)
+    else:
+        strings = values.astype(str)
+    out = pd.Series(np.nan, index=s.index, dtype=object)
+    out[notna] = strings
+    return out
+
+
 def is_categorical(s: pd.Series) -> bool:
     """Категориальный признак — тот, что нельзя целиком привести к числу.
 
@@ -71,8 +92,7 @@ def cast_types(
     for c in num_cols:
         out[c] = pd.to_numeric(normalize_missing(out[c]), errors="coerce").astype("float64")
     for c in cat_cols:
-        s = normalize_missing(out[c])
-        out[c] = s.where(s.isna(), s.astype(str)).astype(object)
+        out[c] = category_strings(out[c])
     if target_col is not None:
         out[target_col] = out[target_col].astype(int)
     return out

@@ -3,6 +3,7 @@
 from collection_lab.data.split import DataSplit, random_split, time_split
 from collection_lab.data.types import (
     cast_types,
+    category_strings,
     detect_categorical,
     is_categorical,
     normalize_missing,
@@ -13,6 +14,7 @@ from collection_lab.data.types import (
 __all__ = [
     "DataSplit",
     "cast_types",
+    "category_strings",
     "detect_categorical",
     "is_categorical",
     "normalize_missing",
