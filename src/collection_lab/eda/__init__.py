@@ -8,6 +8,8 @@ from collection_lab.eda.vintage import (
     eda_transactions,
     maturation_transactions,
     plot_vintage,
+    vintage,
+    vintage_by_segment,
     vintage_by_type,
 )
 
@@ -21,6 +23,8 @@ __all__ = [
     "plot_vintage",
     "target_dynamics",
     "target_summary",
+    "vintage",
+    "vintage_by_segment",
     "vintage_by_type",
     "wilson_ci",
 ]

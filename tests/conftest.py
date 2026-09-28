@@ -19,6 +19,19 @@ FEATURES_CSV = DATA_DIR / "df_agg.csv"
 TRANSACTIONS_CSV = DATA_DIR / "RTK_model" / "RTK_model" / "data" / "df_1.csv"
 
 
+@pytest.fixture(autouse=True)
+def _no_clearml_network(monkeypatch):
+    """Тесты не ходят на сервер ClearML: без этого при недоступном сервере они висят минутами
+    на повторных попытках соединения. Нужный тест подменяет запрос сам (фикстура fake_clearml).
+    """
+    from collection_lab.tracking import clearml as cml
+
+    def blocked(task):
+        raise RuntimeError("запрос к серверу ClearML в тестах запрещён")
+
+    monkeypatch.setattr(cml, "_request_plot_metrics", blocked)
+
+
 @pytest.fixture(scope="session")
 def binary_df() -> pd.DataFrame:
     """Синтетическая бинарная выборка: информативные, шумовые, коррелированные,

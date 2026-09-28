@@ -66,7 +66,8 @@ with cl.tracking.Experiment("RTK_model", clearml=True) as exp:
 > `Experiment(..., clearml=True, capture_plots=True)`. Создавайте **один** `Experiment` на запуск и
 > не вызывайте `Experiment(...)` повторно внутри `with ... as exp:`.
 
-Полный пример на реальных данных — [examples/rtk_pipeline.ipynb](examples/rtk_pipeline.ipynb).
+Полный пример на реальных данных — [examples/rtk_pipeline.ipynb](examples/rtk_pipeline.ipynb);
+все функции `eda` по отдельности — [examples/eda_overview.ipynb](examples/eda_overview.ipynb).
 
 ## Версионирование экспериментов
 
@@ -138,7 +139,7 @@ scores = inference.predict(df)          # df — таблица с колонк�
 |---|---|
 | `data` | `split_feature_types`, `cast_types`, `time_split`, `random_split`, `DataSplit` |
 | `core` | `make_model`, `LGBMModel`, `CatBoostModel`, `FeaturePreparer`, `cross_validate`, `make_folds`, `Result` |
-| `eda` | `overview`, `target_summary`, `plot_distribution`, `plot_target_rate_by_bins`, `target_dynamics`, `maturation_transactions`, `plot_vintage`, `vintage_by_type`, `eda_transactions`, `add_days_since` |
+| `eda` | `overview`, `target_summary`, `plot_distribution`, `plot_target_rate_by_bins`, `target_dynamics`, `vintage`, `vintage_by_type`, `vintage_by_segment`, `maturation_transactions`, `plot_vintage`, `eda_transactions`, `add_days_since` |
 | `metrics` | `roc_auc`, `gini`, `ks`, `metrics_by_segment`, `psi`, `psi_table`, `feature_psi`, `psi_by_period`, `gain_chart`, `gain_chart_metrics`, `hosmer_lemeshow`, `information_value`, `iv_table` |
 | `selection` | `quality_filter`, `correlation_filter`, `univariate_scores`, `cumulative_importance_selection`, `drop_column_importance`, `permutation_importance`, `rfe`, `backward_elimination`, `forward_addition`, `incremental_feature_eval`, `SelectionPipeline` |
 | `modeling` | `train_model`, `compare_models`, `tune_hyperparams`, `sample_size_curve` |

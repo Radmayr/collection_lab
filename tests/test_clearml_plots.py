@@ -90,6 +90,8 @@ def fake_clearml(monkeypatch):
         monkeypatch.setattr(cml, "init_task", init)
         monkeypatch.setattr(cml, "is_offline", lambda: False)
         monkeypatch.setattr(cml.time, "sleep", lambda s: None)
+        # без сети: запрос метрик уходит в FakeTask.send, а не на сервер ClearML
+        monkeypatch.setattr(cml, "_request_plot_metrics", lambda t: t.send(None))
         return task
 
     return install

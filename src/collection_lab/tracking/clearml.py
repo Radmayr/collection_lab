@@ -294,9 +294,7 @@ def _server_plot_titles(task) -> set[str] | None:
     страницами, ограниченными по размеру, и крупные графики в ответ не попадают, хотя сохранены.
     """
     try:
-        from clearml.backend_api.services import events
-
-        response = task.send(events.GetTaskMetricsRequest(tasks=[task.id], event_type="plot"))
+        response = _request_plot_metrics(task)
         titles: set[str] = set()
         for item in response.response.metrics:
             for m in item["metrics"]:
@@ -305,6 +303,17 @@ def _server_plot_titles(task) -> set[str] | None:
         return titles
     except Exception:  # noqa: BLE001 — старый сервер/SDK: проверить нельзя, но и не тревожим
         return None
+
+
+def _request_plot_metrics(task):
+    """Сетевая часть: запрос к серверу списка метрик задачи с событиями типа plot.
+
+    Вынесена отдельно, потому что уже обращение к ``events`` открывает сессию с сервером
+    ClearML — в тестах подменяется, чтобы они не зависели от сети.
+    """
+    from clearml.backend_api.services import events
+
+    return task.send(events.GetTaskMetricsRequest(tasks=[task.id], event_type="plot"))
 
 
 def plots_summary(*, check: bool = True, wait: float = 3.0) -> pd.DataFrame:

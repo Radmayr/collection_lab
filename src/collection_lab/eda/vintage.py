@@ -13,6 +13,20 @@ from collection_lab.plotting.theme import color, histogram, style
 
 MILESTONES = [(30, "1м"), (90, "3м"), (180, "6м"), (365, "12м"), (730, "24м"), (1095, "36м")]
 
+Y_LABELS = {
+    "cum_share_of_balance": "накопленная доля от баланса",
+    "cum_share_clients": "конверсия в транзакцию",
+    "cum_tx_sum": "накопленная сумма транзакций",
+    "cum_tx_cnt": "накопленное число транзакций",
+    "cum_clients_with_tx": "клиентов с транзакцией",
+}
+"""Человекочитаемые подписи для колонок :func:`maturation_transactions` — используются как
+заголовок и подпись оси Y в :func:`plot_vintage` / :func:`vintage` / :func:`vintage_by_type`."""
+
+
+def _y_label(y: str) -> str:
+    return Y_LABELS.get(y, y)
+
 
 def add_days_since(
     df: pd.DataFrame, event_col: str, base_col: str, name: str = "tx_days"
@@ -23,6 +37,13 @@ def add_days_since(
     base = pd.to_datetime(out[base_col], errors="coerce", format="mixed").dt.normalize()
     out[name] = (event - base).dt.days
     return out
+
+
+def _effective_horizon(retro_dates: pd.Series, horizon_days: int, processed_dt) -> int:
+    """Горизонт, урезанный так, чтобы самая поздняя ретро-дата успела «дозреть» к processed_dt."""
+    retro = pd.to_datetime(retro_dates, format="mixed").dt.normalize()
+    processed = pd.Timestamp(processed_dt if processed_dt is not None else "today").normalize()
+    return max(0, min(horizon_days, int((processed - retro.max()).days)))
 
 
 def maturation_transactions(
@@ -61,8 +82,7 @@ def maturation_transactions(
     """
     df = df.copy()
     df[retro_dt_col] = pd.to_datetime(df[retro_dt_col], format="mixed").dt.normalize()
-    processed = pd.Timestamp(processed_dt if processed_dt is not None else "today").normalize()
-    horizon_days = max(0, min(horizon_days, int((processed - df[retro_dt_col].max()).days)))
+    horizon_days = _effective_horizon(df[retro_dt_col], horizon_days, processed_dt)
     for c in (tx_days_col, tx_amount_col, balance_col):
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
@@ -124,7 +144,50 @@ def plot_vintage(
     if y.startswith("cum_share"):
         fig.update_yaxes(tickformat=".1%")
     fig.update_layout(legend_title_text=legend_title)
-    return style(fig, title or f"Vintage: {y}", height=500, xaxis_title=x_title, yaxis_title=y)
+    label = _y_label(y)
+    return style(fig, title or f"Винтаж: {label}", height=500, xaxis_title=x_title,
+                yaxis_title=label)
+
+
+def vintage(
+    df: pd.DataFrame,
+    sample: str,
+    *,
+    client_id: str = "contract_number",
+    tx_days_col: str = "tx_days",
+    tx_amount_col: str = "transaction_amt",
+    balance_col: str = "rtk_balance",
+    retro_dt_col: str = "rtk_send_date",
+    horizon_days: int = 365,
+    step: int = 1,
+    processed_dt=None,
+    population: pd.DataFrame | None = None,
+    y: str = "cum_share_of_balance",
+    title: str | None = None,
+    x_title: str | None = None,
+    legend_title: str | None = None,
+) -> tuple[pd.DataFrame, go.Figure]:
+    """Винтаж одной выборки: расчёт и график одним вызовом.
+
+    Объединяет :func:`maturation_transactions` (параметры ``client_id`` … ``population``) и
+    :func:`plot_vintage` (``y``, ``title``, ``x_title``, ``legend_title``) — так же, как
+    :func:`vintage_by_type` делает это для нескольких срезов сразу. Сами
+    ``maturation_transactions``/``plot_vintage`` остаются отдельно, когда нужно посчитать
+    несколько выборок и свести их в один график (см. исходники ``vintage_by_type``).
+
+    Returns
+    -------
+    (pd.DataFrame, go.Figure)
+        Таблица :func:`maturation_transactions` и график :func:`plot_vintage`.
+    """
+    data = maturation_transactions(
+        df, sample, client_id=client_id, tx_days_col=tx_days_col, tx_amount_col=tx_amount_col,
+        balance_col=balance_col, retro_dt_col=retro_dt_col, horizon_days=horizon_days, step=step,
+        processed_dt=processed_dt, population=population,
+    )
+    fig = plot_vintage(data, y, title=title, x_title=x_title or f"Дней от {retro_dt_col}",
+                       legend_title=legend_title)
+    return data, fig
 
 
 def vintage_by_type(
@@ -142,14 +205,24 @@ def vintage_by_type(
 ) -> tuple[pd.DataFrame, go.Figure]:
     """Винтажи в разрезе типа транзакции на одном графике (бывший ``plot_vintage_by_tx_type``).
 
+    **База у всех типов одна** — все договоры ``df`` (или ``population``) и их баланс, как в
+    :func:`vintage` по всей выборке; по типу делятся только транзакции. Поэтому по всем типам
+    ``cum_share_of_balance``, ``cum_tx_sum`` и ``cum_tx_cnt`` в сумме дают ровно общий винтаж.
+    Горизонт тоже общий (урезается по самой поздней ретро-дате всей выборки).
+    ``cum_share_clients`` по типам в сумме может быть больше общей: у клиента бывают
+    транзакции нескольких типов.
+
     Parameters
     ----------
     types : list, optional
         Явный список типов; иначе все (или ``top_k`` по |обороту|, не реже ``min_tx``).
+        Договоры без транзакций типом не считаются — они входят только в базу. Транзакция
+        с пустым типом попадает в тип ``"NA"``.
     abs_amount : bool
         Считать по ``|amount|`` (когда есть отрицательные суммы).
     maturation_kwargs
-        Параметры :func:`maturation_transactions` (``client_id``, ``horizon_days``, ...).
+        Параметры :func:`maturation_transactions` (``client_id``, ``horizon_days``,
+        ``population`` …). Без ``population`` база — все договоры ``df``.
 
     Returns
     -------
@@ -160,13 +233,21 @@ def vintage_by_type(
     if abs_amount:
         df["_amt"] = pd.to_numeric(df[tx_amount_col], errors="coerce").abs()
         amount_col = "_amt"
-    df[tx_type_col] = df[tx_type_col].astype(object).fillna("NA")
+    kwargs = dict(maturation_kwargs)
+    if kwargs.get("population") is None:  # и без ключа, и при явном population=None
+        kwargs["population"] = df  # одна база (договоры и баланс) для всех типов
+    retro = kwargs.get("retro_dt_col", "rtk_send_date")
+    kwargs["horizon_days"] = _effective_horizon(  # один горизонт для всех типов
+        df[retro], kwargs.get("horizon_days", 365), kwargs.get("processed_dt"))
+
+    tx = df[pd.to_numeric(df[amount_col], errors="coerce").notna()].copy()  # только транзакции
+    tx[tx_type_col] = tx[tx_type_col].astype(object).fillna("NA")
     if types is None:
-        turnover = (df.groupby(tx_type_col)[amount_col]
+        turnover = (tx.groupby(tx_type_col)[amount_col]
                     .apply(lambda s: pd.to_numeric(s, errors="coerce").abs().sum())
                     .sort_values(ascending=False))
         if min_tx:
-            counts = df.groupby(tx_type_col).size()
+            counts = tx.groupby(tx_type_col).size()
             turnover = turnover[counts.reindex(turnover.index).fillna(0) >= min_tx]
         if top_k:
             turnover = turnover.head(top_k)
@@ -174,17 +255,98 @@ def vintage_by_type(
 
     parts = []
     for t in types:
-        sub = df[df[tx_type_col] == t]
+        sub = tx[tx[tx_type_col] == t]
         if len(sub):
             parts.append(maturation_transactions(sub, sample=str(t), tx_amount_col=amount_col,
-                                                 **maturation_kwargs))
+                                                 **kwargs))
+    if not parts:
+        raise ValueError("Нет данных для винтажей.")
+    data = pd.concat(parts, ignore_index=True)
+    fig = plot_vintage(data, y, legend_title=tx_type_col, x_title=f"Дней от {retro}",
+                       title=title or f"Винтаж по «{tx_type_col}»: {_y_label(y)}"
+                       + (" (|amount|)" if abs_amount else ""))
+    return data, fig
+
+
+def vintage_by_segment(
+    df: pd.DataFrame,
+    segment_col: str,
+    *,
+    y: str = "cum_share_of_balance",
+    segments: list | None = None,
+    top_k: int | None = None,
+    min_contracts: int = 0,
+    title: str | None = None,
+    client_id: str = "contract_number",
+    population: pd.DataFrame | None = None,
+    **maturation_kwargs: Any,
+) -> tuple[pd.DataFrame, go.Figure]:
+    """Винтажи разных популяций (продуктов, каналов, когорт) на одном графике.
+
+    В отличие от :func:`vintage_by_type`, **у каждого сегмента своя база** — его договоры и
+    их баланс: продукты сравниваются между собой, а не делят одну общую базу. Результат для
+    сегмента совпадает с :func:`vintage` по строкам этого сегмента. Горизонт у каждого сегмента
+    тоже свой (урезается по его последней ретро-дате), поэтому кривые могут быть разной длины.
+
+    Parameters
+    ----------
+    segment_col : str
+        Колонка-разрез на уровне договора (например, ``financial_account_subtype_cd``).
+        Договоры с пустым значением образуют сегмент ``"NA"``.
+    segments : list, optional
+        Явный список сегментов (в этом порядке); иначе все, по убыванию числа договоров
+        (при равенстве — по алфавиту).
+    top_k : int, optional
+        Оставить ``top_k`` крупнейших по числу договоров (если ``segments`` не задан).
+    min_contracts : int
+        Не показывать сегменты, где договоров меньше (малые сегменты дают шумные кривые).
+    population : pd.DataFrame, optional
+        Отдельная база ``[client_id, balance_col, segment_col]`` — делится по ``segment_col``
+        так же, как ``df``.
+    maturation_kwargs
+        Остальные параметры :func:`maturation_transactions` (``tx_days_col``, ``horizon_days``,
+        ``processed_dt`` …).
+
+    Returns
+    -------
+    (pd.DataFrame, go.Figure)
+        Таблицы :func:`maturation_transactions` по сегментам (колонка ``sample`` — сегмент) и
+        график :func:`plot_vintage`.
+    """
+    if segment_col not in df.columns:
+        raise KeyError(f"В df нет колонки {segment_col!r}")
+    if population is not None and segment_col not in population.columns:
+        raise KeyError(f"В population нет колонки {segment_col!r}: база должна делиться по "
+                       "сегментам так же, как df")
+    df = df.copy()
+    df[segment_col] = df[segment_col].astype(object).fillna("NA")
+    if population is not None:
+        population = population.copy()
+        population[segment_col] = population[segment_col].astype(object).fillna("NA")
+
+    if segments is None:
+        sizes = (df.drop_duplicates(client_id).groupby(segment_col).size()  # по алфавиту
+                 .sort_values(ascending=False, kind="stable"))  # при равенстве — алфавит
+        if min_contracts:
+            sizes = sizes[sizes >= min_contracts]
+        if top_k:
+            sizes = sizes.head(top_k)
+        segments = sizes.index.tolist()
+
+    parts = []
+    for s in segments:
+        sub = df[df[segment_col] == s]
+        if not len(sub):
+            continue
+        base = None if population is None else population[population[segment_col] == s]
+        parts.append(maturation_transactions(sub, sample=str(s), client_id=client_id,
+                                             population=base, **maturation_kwargs))
     if not parts:
         raise ValueError("Нет данных для винтажей.")
     data = pd.concat(parts, ignore_index=True)
     retro = maturation_kwargs.get("retro_dt_col", "rtk_send_date")
-    fig = plot_vintage(data, y, legend_title=tx_type_col, x_title=f"Дней от {retro}",
-                       title=title or f"Vintage по «{tx_type_col}» — {y}"
-                       + (" (|amount|)" if abs_amount else ""))
+    fig = plot_vintage(data, y, legend_title=segment_col, x_title=f"Дней от {retro}",
+                       title=title or f"Винтаж по «{segment_col}»: {_y_label(y)}")
     return data, fig
 
 
