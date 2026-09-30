@@ -67,7 +67,8 @@ with cl.tracking.Experiment("RTK_model", clearml=True) as exp:
 > не вызывайте `Experiment(...)` повторно внутри `with ... as exp:`.
 
 Полный пример на реальных данных — [examples/rtk_pipeline.ipynb](examples/rtk_pipeline.ipynb);
-все функции `eda` по отдельности — [examples/eda_overview.ipynb](examples/eda_overview.ipynb).
+все функции `eda` по отдельности — [examples/eda_overview.ipynb](examples/eda_overview.ipynb);
+винтажи (продукты, типы транзакций, когорты) — [examples/vintage_overview.ipynb](examples/vintage_overview.ipynb).
 
 ## Версионирование экспериментов
 

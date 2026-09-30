@@ -1,5 +1,13 @@
 # Changelog
 
+## [Не выпущено]
+
+### Добавлено
+- `examples/vintage_overview.ipynb` (+ `build_vintage_notebook.py`): винтажи по сценарию
+  `sample_overview` — PHX, разрезы по типам транзакций, продукты и когорты на одном графике,
+  фильтр по сумме транзакций с базой через `population`, свой набор кривых через
+  `maturation_transactions` + `plot_vintage`.
+
 ## [0.1.12] — 2026-09-28
 
 ### Добавлено
