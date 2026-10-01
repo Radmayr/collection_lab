@@ -4,6 +4,12 @@
 LightGBM / CatBoost; регрессия поддерживается ядром). Графики — plotly, трекинг — локально
 и в ClearML.
 
+**Содержание:** [Установка](#установка) · [Быстрый старт](#быстрый-старт) · [Примеры](#примеры) ·
+[Структура репозитория](#структура-репозитория) ·
+[Версионирование экспериментов](#версионирование-экспериментов) ·
+[Инференс без библиотеки](#подготовка-признаков-и-инференс-без-библиотеки) ·
+[Как устроено](#как-устроено)
+
 ## Установка
 
 С GitHub (на ML Core или любой машине с `pip`):
@@ -66,9 +72,27 @@ with cl.tracking.Experiment("RTK_model", clearml=True) as exp:
 > `Experiment(..., clearml=True, capture_plots=True)`. Создавайте **один** `Experiment` на запуск и
 > не вызывайте `Experiment(...)` повторно внутри `with ... as exp:`.
 
-Полный пример на реальных данных — [examples/rtk_pipeline.ipynb](examples/rtk_pipeline.ipynb);
-все функции `eda` по отдельности — [examples/eda_overview.ipynb](examples/eda_overview.ipynb);
-винтажи (продукты, типы транзакций, когорты) — [examples/vintage_overview.ipynb](examples/vintage_overview.ipynb).
+## Примеры
+
+| № | Ноутбук | На какой вопрос отвечает |
+|---|---|---|
+| 1 | [01_eda_overview](examples/01_eda_overview.ipynb) | Что лежит в таблице и как пользоваться каждой функцией `eda` |
+| 2 | [02_vintage_overview](examples/02_vintage_overview.ipynb) | Сколько и когда возвращается после отправки в РТК — по продуктам, типам транзакций, когортам |
+| 3 | [03_rtk_pipeline](examples/03_rtk_pipeline.ipynb) | Как построить модель от данных до отчёта и сохранённого эксперимента |
+
+Что считает каждый и как запустить — в [examples/README.md](examples/README.md).
+
+## Структура репозитория
+
+```
+collection_lab/
+├── src/collection_lab/   библиотека (модули — в таблице «Как устроено» ниже)
+├── examples/             ноутбуки-примеры 01–03, их описание и скрипты-сборщики (builders/)
+├── tests/                тесты: pytest; медленные помечены slow
+├── README.md             этот файл
+├── CHANGELOG.md          что менялось по версиям
+└── pyproject.toml        зависимости и настройки сборки, ruff, pytest
+```
 
 ## Версионирование экспериментов
 

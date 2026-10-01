@@ -1,7 +1,9 @@
-"""Собирает examples/rtk_pipeline.ipynb (запуск: python examples/build_notebook.py).
+"""Собирает examples/03_rtk_pipeline.ipynb.
+
+Запуск: python examples/builders/build_rtk_pipeline.py
 
 Выполнить с сохранением графиков:
-    jupyter nbconvert --to notebook --execute --inplace examples/rtk_pipeline.ipynb
+    jupyter nbconvert --to notebook --execute --inplace examples/03_rtk_pipeline.ipynb
 """
 
 from pathlib import Path
@@ -186,6 +188,6 @@ with cl.tracking.Experiment("RTK_model", root="experiments") as exp:   # clearml
 
 nb = nbf.v4.new_notebook(cells=cells)
 nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3", "language": "python"}
-out = Path(__file__).with_name("rtk_pipeline.ipynb")
+out = Path(__file__).parents[1] / "03_rtk_pipeline.ipynb"
 nbf.write(nb, out)
 print("записан", out)

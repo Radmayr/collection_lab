@@ -3,10 +3,15 @@
 ## [Не выпущено]
 
 ### Добавлено
-- `examples/vintage_overview.ipynb` (+ `build_vintage_notebook.py`): винтажи по сценарию
-  `sample_overview` — PHX, разрезы по типам транзакций, продукты и когорты на одном графике,
-  фильтр по сумме транзакций с базой через `population`, свой набор кривых через
-  `maturation_transactions` + `plot_vintage`.
+- `examples/02_vintage_overview.ipynb`: винтажи по сценарию `sample_overview` — PHX, разрезы по
+  типам транзакций, продукты и когорты на одном графике, фильтр по сумме транзакций с базой через
+  `population`, свой набор кривых через `maturation_transactions` + `plot_vintage`.
+- `examples/README.md`: что считает каждый ноутбук и как его запустить.
+
+### Изменено
+- Порядок в `examples/`: ноутбуки пронумерованы по ходу работы (`01_eda_overview`,
+  `02_vintage_overview`, `03_rtk_pipeline`), скрипты-сборщики перенесены в `examples/builders/`.
+  В README — раздел «Примеры», структура репозитория и содержание.
 
 ## [0.1.12] — 2026-09-28
 

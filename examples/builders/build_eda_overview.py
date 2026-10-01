@@ -1,10 +1,12 @@
-"""Собирает examples/eda_overview.ipynb (запуск: python examples/build_eda_notebook.py).
+"""Собирает examples/01_eda_overview.ipynb.
+
+Запуск: python examples/builders/build_eda_overview.py
 
 Каждый вызов ниже прописывает **все** параметры функции явно (включая значения по умолчанию) с
 комментарием, что в них передаётся — это справочник по `eda`, а не быстрый рецепт.
 
 Выполнить с сохранением графиков:
-    jupyter nbconvert --to notebook --execute --inplace examples/eda_overview.ipynb
+    jupyter nbconvert --to notebook --execute --inplace examples/01_eda_overview.ipynb
 """
 
 from pathlib import Path
@@ -28,7 +30,7 @@ md("""
 Один прогон каждой функции модуля `eda` на транзакционных данных RTK (`df_1.csv`):
 таблица со сделками (party, contract, транзакция, даты, суммы, баланс) — типичный вход для
 `vintage` / `eda_transactions`, а не для моделирования, поэтому пример отдельный от
-`rtk_pipeline.ipynb`.
+`03_rtk_pipeline.ipynb`.
 
 **Каждый вызов ниже прописывает все параметры функции явно**, даже те, что равны значению по
 умолчанию, — с комментарием, что в них передаётся. Так видно полный набор настроек, а не только
@@ -381,6 +383,6 @@ report["top_clients"]
 
 nb = nbf.v4.new_notebook(cells=cells)
 nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3", "language": "python"}
-out = Path(__file__).with_name("eda_overview.ipynb")
+out = Path(__file__).parents[1] / "01_eda_overview.ipynb"
 nbf.write(nb, out)
 print("записан", out)

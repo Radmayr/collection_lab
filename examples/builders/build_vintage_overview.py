@@ -1,11 +1,13 @@
-"""Собирает examples/vintage_overview.ipynb (запуск: python examples/build_vintage_notebook.py).
+"""Собирает examples/02_vintage_overview.ipynb.
+
+Запуск: python examples/builders/build_vintage_overview.py
 
 Винтажи на `df_1.csv` по сценарию исходного `sample_overview.ipynb` (RTK_model), но на функциях
 `collection_lab.eda`. Каждый вызов прописывает **все** параметры явно, с комментарием.
 
 Выполнить с сохранением графиков:
-    jupyter nbconvert --to notebook --execute examples/vintage_overview.ipynb \
-        --output vintage_overview_executed.ipynb
+    jupyter nbconvert --to notebook --execute examples/02_vintage_overview.ipynb \
+        --output 02_vintage_overview_executed.ipynb
 """
 
 from pathlib import Path
@@ -508,6 +510,6 @@ cl.eda.plot_vintage(
 
 nb = nbf.v4.new_notebook(cells=cells)
 nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3", "language": "python"}
-out = Path(__file__).with_name("vintage_overview.ipynb")
+out = Path(__file__).parents[1] / "02_vintage_overview.ipynb"
 nbf.write(nb, out)
 print("записан", out)
