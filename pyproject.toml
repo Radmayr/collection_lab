@@ -25,9 +25,8 @@ catboost = ["catboost>=1.2"]
 optuna = ["optuna>=3.0"]
 clearml = ["clearml>=1.14"]
 all = ["collection_lab[catboost,optuna,clearml]"]
-report = ["nbformat>=5.0", "nbconvert>=7.0", "ipykernel"]
 dev = [
-    "collection_lab[all,report]",
+    "collection_lab[all]",
     "pytest>=7.0",
     "ruff>=0.5",
     "nbformat>=5.0",
@@ -50,10 +49,6 @@ addopts = "-m 'not slow'"
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-extend-exclude = ["reports/rtk_report.ipynb"]  # собирается из build_rtk_report.py
-
-[tool.ruff.lint.per-file-ignores]
-"reports/build_rtk_report.py" = ["E501"]  # код ячеек отчёта: длинные строки подписей графиков
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "NPY", "PD"]

@@ -27,9 +27,3 @@ catboost_info/
 
 # выполненный пример содержит статистики рабочих данных — только локально
 examples/*_executed.ipynb
-
-# отчёты: локальные настройки, кэш запросов и результаты (статистики рабочих данных)
-reports/settings_local.py
-reports/data_cache/
-reports/out/
-reports/data/
