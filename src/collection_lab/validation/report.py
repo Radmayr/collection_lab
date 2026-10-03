@@ -13,8 +13,8 @@ from collection_lab.core.models import BaseModel
 from collection_lab.data.split import DataSplit
 from collection_lab.metrics.calibration import gain_chart, gain_chart_metrics, prob_to_logit
 from collection_lab.metrics.classification import gini, ks, logloss, metrics_by_segment, roc_auc
-from collection_lab.metrics.stability import feature_psi, psi
-from collection_lab.plotting.theme import combine
+from collection_lab.metrics.stability import PSI_THRESHOLDS, feature_psi, psi, psi_by_period
+from collection_lab.plotting.theme import NEGATIVE, combine
 from collection_lab.selection.importance import importance_plot
 from collection_lab.utils.io import write_csv
 from collection_lab.validation.dynamics import metric_dynamics
@@ -32,6 +32,9 @@ class ModelReport:
         Метрики gain chart по частям (``roc_auc, hl, n_buck, offset, full_calib_*``).
     feature_psi : pd.DataFrame
         PSI признаков train → последняя часть (test, если есть).
+    feature_psi_by_period : pd.DataFrame | None
+        PSI признаков по периодам последней части относительно train (если задан ``date_col``):
+        ``feature, part, period, n, psi, status``. График — :meth:`plot_feature_psi`.
     segments : pd.DataFrame | None
         Метрики по сегментам в каждой части.
     figures : dict[str, go.Figure]
@@ -42,7 +45,30 @@ class ModelReport:
     feature_psi: pd.DataFrame
     segments: pd.DataFrame | None = None
     dynamics: pd.DataFrame | None = None
+    feature_psi_by_period: pd.DataFrame | None = None
     figures: dict[str, go.Figure] = field(default_factory=dict, repr=False)
+
+    def plot_feature_psi(self, features: list[str] | None = None, *, top_k: int | None = None,
+                         n_cols: int = 3, size: int = 350) -> go.Figure:
+        """PSI каждого признака по периодам относительно train — по графику на признак.
+
+        Parameters
+        ----------
+        features : list[str], optional
+            Какие признаки показать (в этом порядке). По умолчанию все, по убыванию
+            максимального PSI — самые нестабильные первыми.
+        top_k : int, optional
+            Оставить ``top_k`` первых признаков.
+        n_cols, size
+            Число графиков в строке и размер одного графика в пикселях.
+
+        Пунктиры — пороги 0.1 (moderate) и 0.25 (significant).
+        """
+        fig = _plot_feature_psi(self.feature_psi_by_period, features, top_k, n_cols, size)
+        from collection_lab.tracking.experiment import auto_figure
+
+        auto_figure(fig, "feature_psi_by_period")
+        return fig
 
     def show(self) -> None:
         """Показать таблицы и графики (в Jupyter)."""
@@ -84,7 +110,8 @@ class ModelReport:
         """
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
-        for name in ("metrics", "calibration", "segments", "feature_psi", "dynamics"):
+        for name in ("metrics", "calibration", "segments", "feature_psi", "dynamics",
+                     "feature_psi_by_period"):
             obj = getattr(self, name)
             if obj is not None:
                 write_csv(obj, directory / f"report_{name}.csv", index=True)
@@ -93,6 +120,44 @@ class ModelReport:
 
         _maybe_send(self, directory.name or "report", to_clearml)
         return directory
+
+
+def _feature_psi_by_period(train: pd.DataFrame, data: pd.DataFrame, features: list[str],
+                           cat_features, date_col: str, freq: str, part: str) -> pd.DataFrame:
+    cat_features = set(cat_features or ())
+    tables = []
+    for f in features:
+        t = psi_by_period(data, f, date_col, freq=freq, reference=train[f],
+                          categorical=True if f in cat_features else None)
+        t.insert(0, "feature", f)
+        t.insert(1, "part", part)
+        tables.append(t)
+    return pd.concat(tables, ignore_index=True)
+
+
+def _plot_feature_psi(table: pd.DataFrame | None, features: list[str] | None,
+                      top_k: int | None, n_cols: int, size: int) -> go.Figure:
+    if table is None:
+        raise ValueError("PSI по периодам не посчитан: передайте date_col в model_report.")
+    if features is None:
+        features = table.groupby("feature")["psi"].max().sort_values(ascending=False).index
+    features = list(features)[:top_k]
+    unknown = [f for f in features if f not in set(table["feature"])]
+    if unknown:
+        raise ValueError(f"Нет в отчёте: {unknown}")
+    figs = []
+    for f in features:
+        t = table[table["feature"] == f]
+        figs.append(go.Figure(go.Scatter(
+            x=t["period"], y=t["psi"], mode="lines+markers", name=f, customdata=t["n"],
+            hovertemplate="%{x|%Y-%m}: PSI %{y:.3f}, n = %{customdata}<extra></extra>")))
+    part = table["part"].iloc[0]
+    fig = combine(figs, features, n_cols=min(n_cols, len(figs)), size=size,
+                  title=f"PSI признаков по периодам: {part} относительно train")
+    for level, color in zip(PSI_THRESHOLDS, ("orange", NEGATIVE), strict=True):
+        fig.add_hline(y=level, line_dash="dot", line_color=color, line_width=1)
+    fig.update_yaxes(rangemode="tozero")
+    return fig
 
 
 def model_report(
@@ -114,11 +179,14 @@ def model_report(
     features : list[str], optional
         По умолчанию — признаки модели.
     date_col : str, optional
-        Колонка даты — добавляет динамику AUC по периодам.
+        Колонка даты — добавляет динамику AUC по периодам и PSI признаков по периодам
+        последней части (test, если есть) относительно train.
     segment : str, optional
         Колонка сегмента — метрики по сегментам.
     n_buckets : int
         Бакетов в gain chart.
+    freq : str
+        Период для динамики: ``"M"``, ``"Q"``, ...
     """
     features = list(model.features_ if features is None else features)
     target = split.target
@@ -150,12 +218,15 @@ def model_report(
                                size=450),
         "feature_importance": importance_plot(model.feature_importance("gain")),
     }
-    dyn = None
+    dyn = psi_dyn = None
     if date_col is not None:
         labeled = pd.concat([df.assign(_score=scores[n], _part=n) for n, df in parts.items()])
         res = metric_dynamics(labeled, target, "_score", date_col, "_part", freq=freq)
         dyn = res.table
         figures["auc_dynamics"] = res.plot(title="AUC по периодам (train / val / test)")
+        psi_dyn = _feature_psi_by_period(parts["train"], parts[last], features,
+                                         model.cat_features_, date_col, freq, last)
+        figures["feature_psi_by_period"] = _plot_feature_psi(psi_dyn, None, None, 3, 350)
     seg_df = None
     if seg_tables:
         seg_df = pd.concat(seg_tables, ignore_index=True).set_index(["part", "segment"])
@@ -165,6 +236,7 @@ def model_report(
         feature_psi=fpsi,
         segments=seg_df,
         dynamics=dyn,
+        feature_psi_by_period=psi_dyn,
         figures=figures,
     )
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.15] — 2026-10-03
+
+### Добавлено
+- `model_report(..., date_col=...)`: PSI каждого признака по периодам test относительно train —
+  таблица `report.feature_psi_by_period` (`feature, part, period, n, psi, status`) и график
+  `report.figures["feature_psi_by_period"]`; оба сохраняются в `report.save` и
+  `exp.save_report`.
+- `report.plot_feature_psi(features=None, top_k=None, n_cols=3, size=350)` — те же графики для
+  выбранных признаков: по графику на признак, пороги 0.1 и 0.25 пунктиром, по умолчанию самые
+  нестабильные первыми.
+- README: «Справочник функций» — что делает и что возвращает каждая функция по модулям.
+
 ## [0.1.14] — 2026-10-02
 
 ### Изменено

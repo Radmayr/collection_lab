@@ -82,7 +82,8 @@ def _send_to_clearml(obj, name: str) -> int:
         if obj.plotter is not None:
             figure(obj.plot, name)
     elif isinstance(obj, ModelReport):
-        for key in ("metrics", "calibration", "segments", "feature_psi", "dynamics"):
+        for key in ("metrics", "calibration", "segments", "feature_psi", "dynamics",
+                    "feature_psi_by_period"):
             if getattr(obj, key) is not None:
                 table(getattr(obj, key), f"{name}_{key}")
         for key, fig in obj.figures.items():
@@ -351,7 +352,8 @@ class Experiment:
         """Отчёт по модели (:func:`~collection_lab.validation.model_report`): таблицы и графики
         уходят в ClearML (Plots), локальная копия — в ``logs/<name>/`` (csv + ``report.html``).
         """
-        for key in ("metrics", "calibration", "segments", "feature_psi", "dynamics"):
+        for key in ("metrics", "calibration", "segments", "feature_psi", "dynamics",
+                    "feature_psi_by_period"):
             table = getattr(report, key)
             if table is not None:
                 has_index = not isinstance(table.index, pd.RangeIndex)

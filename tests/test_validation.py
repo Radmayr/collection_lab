@@ -142,7 +142,23 @@ def test_model_report(binary_df, tmp_path):
     assert list(rep.calibration.index) == ["train", "val", "test"]
     assert {"gain_charts", "feature_importance", "auc_dynamics"} <= set(rep.figures)
     assert rep.segments is not None
+
+    by_period = rep.feature_psi_by_period
+    assert set(by_period["feature"]) == {"x1", "x2", "cat", "noise"}
+    assert set(by_period["part"]) == {"test"}
+    assert by_period["period"].min() >= pd.Timestamp("2024-03-01")
+    assert by_period["psi"].notna().all()
+    assert "feature_psi_by_period" in rep.figures
+    fig = rep.plot_feature_psi(["x1", "cat"], n_cols=2)
+    assert [t.name for t in fig.data] == ["x1", "cat"]
+    assert len(rep.plot_feature_psi(top_k=1).data) == 1
+    with pytest.raises(ValueError):
+        rep.plot_feature_psi(["нет_такого"])
+    with pytest.raises(ValueError):
+        model_report(model, split).plot_feature_psi()
+
     rep.save(tmp_path)
+    assert (tmp_path / "report_feature_psi_by_period.csv").exists()
     html = (tmp_path / "report.html").read_text(encoding="utf-8")
     assert "Model report" in html and "plotly" in html
     assert isinstance(learning_curve(model), go.Figure)

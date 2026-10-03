@@ -8,7 +8,7 @@ LightGBM / CatBoost; регрессия поддерживается ядром)
 [Структура репозитория](#структура-репозитория) ·
 [Версионирование экспериментов](#версионирование-экспериментов) ·
 [Инференс без библиотеки](#подготовка-признаков-и-инференс-без-библиотеки) ·
-[Как устроено](#как-устроено)
+[Как устроено](#как-устроено) · [Справочник функций](#справочник-функций)
 
 ## Установка
 
@@ -53,6 +53,7 @@ tune = cl.modeling.tune_hyperparams(split, pipe.selected_, n_trials=50)
 model = cl.modeling.train_model(split, pipe.selected_, params=tune.info["best_params"])
 report = cl.validation.model_report(model, split, date_col="rtk_send_date")
 report.show()
+report.plot_feature_psi()        # PSI каждого признака по месяцам test относительно train
 
 # эксперимент: папки v_N, модель, признаки, метрики (+ ClearML)
 with cl.tracking.Experiment("RTK_model", clearml=True) as exp:
@@ -174,3 +175,277 @@ scores = inference.predict(df)          # df — таблица с колонк�
 | `validation` | `plot_stab`, `metric_dynamics`, `feature_metric_dynamics`, `learning_curve`, `model_report` |
 | `tracking` | `Experiment`, `clearml.*` |
 | `plotting` | `style`, `combine` (сетка графиков) |
+
+Что делает каждая функция — в [справочнике](#справочник-функций) ниже.
+
+## Справочник функций
+
+Все функции вызываются как `cl.<модуль>.<функция>` после `import collection_lab as cl`. Полный список
+параметров и значения по умолчанию — в докстринге: `help(cl.selection.rfe)` или `cl.selection.rfe?`
+в Jupyter. Общие для большинства функций параметры:
+
+| Параметр | Смысл |
+|---|---|
+| `features` | Список признаков; по умолчанию — все колонки таблицы |
+| `cat_features` | Категориальные признаки; по умолчанию определяются автоматически |
+| `model`, `params` | `"lgbm"` / `"catboost"` или готовый адаптер; `params` дополняют дефолты из `config.py` |
+| `metric` | `"auc"`, `"gini"`, `"ks"`, `"logloss"` или своя функция `f(y_true, y_pred)` |
+| `segments` | Колонка или массив меток — метрика считается ещё и по каждому сегменту |
+| `folds` / `n_splits` | Готовые фолды из `core.make_folds` или их число (`<= 1` — holdout) |
+
+### `data` — типы признаков и сплиты
+
+| Функция | Что делает | Возвращает |
+|---|---|---|
+| `split_feature_types(df, features)` | Делит признаки на числовые и категориальные | `(num_cols, cat_cols)` |
+| `detect_categorical(df, exclude)` | Категориальные колонки таблицы | `list[str]` |
+| `is_categorical(s)` | Категориальный ли признак: нельзя целиком привести к числу (dtype `category` — всегда да) | `bool` |
+| `cast_types(df, num_cols, cat_cols, target_col)` | Числовые → `float64`, категориальные → `object` с NaN вместо строковых пропусков, таргет → `int` | копия `df` |
+| `normalize_missing(s)` | Строки `'nan'`, `'None'`, `'null'`, `''` → NaN | `Series` |
+| `category_strings(s)` | Категории как строки в каноничном виде (`1` и `1.0` → `"1"`) | `Series` |
+| `to_numeric_frame(X, cat_cols)` | Некатегориальные колонки → float (даты → наносекунды, `bool` → 0/1) | `DataFrame` |
+| `time_split(df, target, date_col, oot_from, oot_to, val_size, val_mode)` | Out-of-time сплит: test — строки с датой `>= oot_from`, остальное делится на train / val (`val_mode="random"` или `"time"` — последние по дате) | `DataSplit` |
+| `random_split(df, target, val_size, test_size, stratify)` | Случайный стратифицированный сплит | `DataSplit` |
+
+`DataSplit` — части `train`, `val`, `test` и имя таргета; при создании проверяется, что части не пересекаются.
+
+| Метод | Что делает |
+|---|---|
+| `split.summary(date_col)` | Размер, число и доля таргета по частям (+ диапазон дат) |
+| `split.xy(part, features)` | `(X, y)` для части `"train"` / `"val"` / `"test"` |
+| `split.eval_sets(parts)` | `{"val": (df, y), "test": (df, y)}` — вход `eval_sets=` у `incremental_feature_eval` |
+| `split.labeled(col="sample")` | Все части одной таблицей с колонкой-меткой части |
+| `split.items()` | Итерация по непустым частям: `("train", df), ...` |
+
+### `core` — модели, кросс-валидация, результат
+
+| Функция / класс | Что делает | Возвращает |
+|---|---|---|
+| `make_model(model, params, task, early_stopping_rounds, verbose)` | Создаёт адаптер по имени (`"lgbm"`, `"catboost"`) или клонирует готовый | `LGBMModel` / `CatBoostModel` |
+| `make_folds(y, n_splits, stratify, test_size)` | Фиксированные фолды, чтобы сравнения шли на одном разбиении | `[(train_idx, valid_idx), ...]` |
+| `cross_validate(X, y, features, model, params, folds, metric, segments, ...)` | Обучает модель на фолдах, считает метрику — общую и по сегментам | `CVResult` |
+| `FeaturePreparer(cat_features)` | Подготовка признаков для бустингов: `fit` запоминает категории по train, `transform` применяет их к любой выборке | — |
+| `make_lgbm_ready(X, cat_cols)` | Совместимость со старым кодом; модели библиотеки им не пользуются | `(X_ready, cat_cols)` |
+| `export_model(model, directory, X_check)` | Выгрузка модели для инференса без библиотеки (то же, что `model.export`) | `dict` с путями файлов |
+| `iterations_param(model, n)` | Имя параметра числа деревьев: `{"n_estimators": n}` или `{"iterations": n}` | `dict` |
+
+Адаптер модели (`LGBMModel`, `CatBoostModel`):
+
+| Метод | Что делает |
+|---|---|
+| `model.fit(X, y, eval_set, cat_features, sample_weight)` | Обучение; early stopping по `eval_set`, если он передан |
+| `model.predict(X)` | Вероятность класса 1 (binary) или прогноз (regression) |
+| `model.feature_importance(kind="gain")` | Важности признаков (`"gain"` / `"split"`) по убыванию |
+| `model.clone(params)` | Необученная копия с теми же настройками |
+| `model.export(directory, X_check)` | Папка с нативной моделью, `preprocessing.json`, `inference.py`, `requirements.txt` |
+| `model.n_iterations_` | Число деревьев, реально используемое при прогнозе |
+
+`CVResult`: `fold_scores`, `mean`, `std`, `segment_scores`, `segment_means`, `oof` (out-of-fold прогноз),
+`best_iterations`, `mean_best_iteration`, `summary()`.
+
+`Result` — то, что возвращают функции отбора и анализа:
+
+| Атрибут / метод | Что это |
+|---|---|
+| `result.table` (он же `result.log`) | Основная таблица: лог решений по признакам или история шагов |
+| `result.selected` | Отобранные признаки |
+| `result.dropped` | Признаки, помеченные в логе как удалённые |
+| `result.info` | Параметры запуска и сводные метрики |
+| `result.plot()` | Plotly-график результата |
+| `result.save(directory, prefix, to_clearml)` | Таблица (csv), список признаков и `info` (json) в папку |
+
+### `eda` — разведочный анализ
+
+| Функция | Что делает | Возвращает |
+|---|---|---|
+| `overview(df, columns)` | Сводка по колонкам: тип, пропуски, уникальные, доля нулей, самое частое значение, min / median / mean / max | `DataFrame` |
+| `target_summary(df, target, by)` | Размер выборки, число и доля таргета — всего или в разрезе `by` | `DataFrame` |
+| `plot_distribution(data, col, clip_low, clip_high, force_log, bins)` | Гистограмма с обрезкой выбросов по квантилям и авто-лог-шкалой | `Figure` |
+| `plot_target_rate_by_bins(df, col, target, bins)` | Доля таргета по квантильным бинам признака и размер бинов | `Figure` |
+| `target_dynamics(df, date_col, target_col, segment_col, freq, alpha)` | Доля таргета по периодам и сегментам с доверительным интервалом Уилсона | `Result` |
+| `wilson_ci(k, n, alpha)` | Доверительный интервал Уилсона для доли `k / n` | `(low, high)` |
+| `add_days_since(df, event_col, base_col, name)` | Колонка «дней от `base_col` до `event_col`» | `DataFrame` |
+| `maturation_transactions(df, sample, horizon_days, step, population, ...)` | Расчёт винтажа: накопительные суммы, число транзакций и доля клиентов по дням от ретро-даты | `DataFrame` |
+| `plot_vintage(res, y)` | Винтажные кривые по таблице `maturation_transactions` | `Figure` |
+| `vintage(df, sample, y, ...)` | Винтаж одной выборки: расчёт и график одним вызовом | `(DataFrame, Figure)` |
+| `vintage_by_type(df, tx_type_col, types, top_k, min_tx, abs_amount, ...)` | Винтажи по типам транзакций на одном графике; база общая, кривые в сумме дают общий винтаж | `(DataFrame, Figure)` |
+| `vintage_by_segment(df, segment_col, segments, top_k, min_contracts, ...)` | Винтажи по продуктам / когортам; у каждого сегмента своя база | `(DataFrame, Figure)` |
+| `eda_transactions(df, ...)` | Быстрый EDA транзакционной таблицы: обзор, пропуски, распределение сумм, знаки, топ клиентов | `dict` таблиц и графиков |
+
+`y` у винтажей: `cum_share_of_balance` (по умолчанию), `cum_share_clients`, `cum_tx_sum`, `cum_tx_cnt`,
+`cum_clients_with_tx`.
+
+### `metrics` — качество, стабильность, калибровка, WoE / IV
+
+Качество:
+
+| Функция | Что делает | Возвращает |
+|---|---|---|
+| `roc_auc(y_true, y_pred)` | ROC AUC; NaN, если в `y_true` один класс | `float` |
+| `gini(y_true, y_pred)` | `2 · AUC − 1` | `float` |
+| `ks(y_true, y_pred)` | Статистика Колмогорова–Смирнова между скорами классов | `float` |
+| `logloss(y_true, y_pred)` | Log loss по вероятностям класса 1 | `float` |
+| `metrics_by_segment(y_true, y_pred, segments, metrics, min_size, add_total)` | Метрики по сегментам (+ строка `ALL`) | `DataFrame` |
+| `get_metric(metric)` | Метрика по имени или функции вместе с направлением оптимизации | `Metric` |
+
+Стабильность (PSI). Бины числового признака — квантили базовой выборки, пропуски — отдельный бин `NaN`;
+`< 0.1` — stable, `0.1–0.25` — moderate, `> 0.25` — significant.
+
+| Функция | Что делает | Возвращает |
+|---|---|---|
+| `psi(expected, actual, bins, categorical)` | PSI между двумя выборками | `float` |
+| `psi_table(expected, actual, bins, categorical)` | Разбивка PSI по бинам: счётчики, доли, вклад бина | `DataFrame` |
+| `feature_psi(expected, actual, features, bins, cat_features)` | PSI каждого признака между двумя таблицами, по убыванию | `DataFrame` `feature, psi, status` |
+| `psi_by_period(df, column, date_col, freq, mode, reference, bins, categorical)` | PSI признака по периодам: против базы `reference` (или первого периода) либо против предыдущего периода (`mode="adjacent"`) | `DataFrame` `period, n, psi, status` |
+| `psi_label(value)` | Текстовая интерпретация значения PSI | `str` |
+| `psi_from_counts(expected_counts, actual_counts)` | PSI по готовым счётчикам бинов | `float` |
+| `quantile_edges(x, bins)` | Границы квантильных бинов | `ndarray` |
+
+Калибровка:
+
+| Функция | Что делает | Возвращает |
+|---|---|---|
+| `prob_to_logit(p)` | Логит вероятности | `ndarray` |
+| `gain_chart(values, target, groups, n_buckets, calib, calib_full, ...)` | Gain chart по бакетам **логита**: фактический badrate с 99% ДИ против прогноза, опционально линии калибровки | `dict` метрик, фигура или `(fig, dict)` |
+| `gain_chart_table(logit, target, n_buckets)` | Расчётная часть gain chart для одной группы | `(DataFrame, dict)` |
+| `gain_chart_metrics(metrics, segments)` | Сводная таблица метрик нескольких `gain_chart` | `DataFrame` |
+| `hosmer_lemeshow(y_true, y_prob, buckets)` | Статистика Хосмера–Лемешоу и p-value | `(hl, p_value)` |
+| `calibration_offset(logit, target)` | Сдвиг `b`, при котором средний прогноз равен среднему таргету | `float` |
+| `full_calibration(logit, target)` | Коэффициенты `(k, b)` регрессии `target ~ k·logit + b` | `(k, b)` |
+
+WoE / IV:
+
+| Функция | Что делает | Возвращает |
+|---|---|---|
+| `information_value(values, target, n_buckets, method, bins_method)` | IV признака (NaN — отдельный бакет) | `float` |
+| `iv_table(df, target, features, n_buckets)` | IV числовых признаков по убыванию с оценкой силы | `DataFrame` `feature, iv, strength` |
+| `quantile_buckets(values, n_buckets)` | Квантильные бакеты, не разрывающие одинаковые значения | `ndarray` номеров бакетов |
+| `woe_iv_table(values, target, buckets)` | WoE и вклад в IV по бакетам | `DataFrame` |
+
+### `selection` — отбор признаков
+
+Все функции возвращают `Result`: `selected` — оставшиеся признаки, `table` — лог решений.
+
+| Функция | Что делает |
+|---|---|
+| `quality_filter(df, features, num_missing_threshold, num_zero_threshold, cat_unique_max, ...)` | Убирает признаки с долей пропусков / нулей выше порога, константы, категориальные со слишком малым или большим числом значений |
+| `correlation_filter(df, y, features, threshold, strategy, ...)` | В каждой группе коррелирующих числовых признаков оставляет один с лучшим AUC. `strategy`: `"direct"` — AUC признака как скора, `"model"` — CV AUC однофакторной модели, `"hybrid"` — модель только там, где лидеры близки |
+| `correlation_groups(X, threshold, method)` | Группы признаков, связанных цепочками `\|corr\| > threshold`; возвращает `(groups, corr)` |
+| `univariate_scores(X, y, features, n_splits, ...)` | AUC маленькой модели LightGBM на каждом признаке отдельно |
+| `univariate_filter(X, y, features, min_auc)` | Оставляет признаки с однофакторным AUC `>= min_auc` |
+| `direct_auc(x, y, folds)` | AUC признака как скора без модели: `max(AUC, 1 − AUC)`; возвращает `float` |
+| `cumulative_importance_selection(df, target, features, threshold, importance, ...)` | Оставляет признаки, дающие `threshold` суммарной важности, и сравнивает метрику полной и урезанной модели |
+| `permutation_importance(model, X, y, features, metric, n_repeats)` | Падение метрики при перемешивании признака; возвращает `DataFrame` |
+| `drop_column_importance(train, val, features, target, test, ...)` | Падение метрики при удалении признака и переобучении |
+| `rfe(X, y, features, tol, segments, segment_tol, step, min_features, ...)` | Рекурсивное исключение: признак удаляется, если CV-метрика падает не больше чем на `tol` (и в каждом сегменте — не больше `segment_tol`) |
+| `backward_elimination(X_train, y_train, X_valid, y_valid, features, ...)` | Удаляет по одному наименее важный признак до `min_features`, на каждом шаге — метрика на train / valid и в сегментах |
+| `forward_addition(X_train, y_train, X_valid, y_valid, base_features, candidate_features, mode)` | Эффект добавления кандидатов к базовому набору: по одному, всех разом или группами |
+| `incremental_feature_eval(X, y, features, eval_sets, direction, mode, ...)` | Пошагово добавляет или убирает признаки и считает CV-метрику и метрику на внешних наборах (val, test); выбор шага — только по CV |
+| `importance_plot(importance, top_k)` | Горизонтальный bar-chart важностей; возвращает `Figure` |
+
+`SelectionPipeline([шаги])` — цепочка, где каждый шаг получает признаки, оставшиеся после предыдущего.
+Шаги: `QualityFilter`, `CorrelationFilter`, `UnivariateFilter`, `CumulativeImportance`, `RFE` (параметры —
+как у одноимённых функций) и `Custom(func)` для своего шага `func(df, target, features, cat_features)`.
+
+| Атрибут / метод | Что это |
+|---|---|
+| `pipe.fit(df, target, features, cat_features)` | Запуск всех шагов |
+| `pipe.selected_` | Итоговый список признаков |
+| `pipe.results_` | `{имя_шага: Result}` с полными логами |
+| `pipe.log_` | Общий лог выбывших: `step, feature, action, reason` |
+| `pipe.summary()` | Сколько признаков вошло и вышло на каждом шаге |
+| `pipe.plot()` | Воронка отбора |
+| `pipe.save(directory)` | Результаты шагов и общий лог в папку |
+
+### `modeling` — обучение и подбор параметров
+
+| Функция | Что делает | Возвращает |
+|---|---|---|
+| `train_model(split, features, model, params, auto_scale_pos_weight, refit_on_train_val, ...)` | Обучение на train с early stopping по val; `refit_on_train_val=True` — финальная модель на train + val с подобранным числом деревьев | адаптер; `model.scores_` — метрика по частям |
+| `compare_models(X, y, models, params, n_splits, ...)` | CV-сравнение моделей на одних и тех же фолдах | `(summary, oof)` |
+| `tune_hyperparams(split, features, model, search_space, fixed_params, n_trials, ...)` | Optuna-поиск: обучение на train, выбор по val, test только записывается | `Result`; `info["best_params"]`, `info["study"]` |
+| `lgbm_search_space(trial)`, `catboost_search_space(trial)` | Пространства поиска по умолчанию | `dict` параметров |
+| `sample_size_curve(split, features, sizes, n_repeats, ...)` | Как метрика зависит от объёма обучающей выборки | `Result` |
+
+### `validation` — стабильность и отчёт по модели
+
+| Функция | Что делает | Возвращает |
+|---|---|---|
+| `plot_stab(values, target, time, n_buckets, feature_nm, period, add_psi, ...)` | Стабильность признака во времени: WoE по бакетам, доли бакетов, badrate и IV по периодам (две фигуры по две панели); `add_psi=True` — PSI между соседними периодами | `None` или `[fig1, fig2]` при `return_plotly_fig=True` |
+| `stability_table(values, target, time, n_buckets, ...)` | Расчётная часть `plot_stab` | `(buckets, periods)` |
+| `metric_dynamics(df, target, score, date_col, segment, freq, metric)` | Метрика скора по периодам и сегментам | `Result` |
+| `feature_metric_dynamics(train, data, features, target, date_col, freq)` | Однофакторная метрика каждого признака по периодам: модель обучается на `train`, оценивается в периодах `data` | `Result` |
+| `learning_curve(model)` | Метрика по итерациям обучения LightGBM | `Figure` |
+| `model_report(model, split, features, date_col, segment, n_buckets, freq)` | Отчёт по модели на train / val / test; с `date_col` — ещё AUC и PSI признаков по периодам | `ModelReport` |
+| `compare_scores(y_true, scores)` | AUC, Gini, KS нескольких скоров на одной выборке | `DataFrame` |
+
+`ModelReport`:
+
+| Атрибут / метод | Что это |
+|---|---|
+| `report.metrics` | AUC, Gini, KS, logloss, PSI скора по частям выборки |
+| `report.calibration` | Метрики gain chart по частям |
+| `report.feature_psi` | PSI каждого признака: train → test целиком |
+| `report.feature_psi_by_period` | PSI каждого признака по периодам test относительно train: `feature, part, period, n, psi, status` (нужен `date_col`) |
+| `report.plot_feature_psi(features, top_k, n_cols, size)` | Графики PSI по периодам — по одному на признак, с порогами 0.1 и 0.25; по умолчанию все признаки, самые нестабильные первыми |
+| `report.segments`, `report.dynamics` | Метрики по сегментам; AUC по периодам |
+| `report.figures` | Графики: `gain_charts`, `feature_importance`, `auc_dynamics`, `feature_psi_by_period` |
+| `report.show()`, `report.to_html(path)`, `report.save(directory)` | Показать в Jupyter; один HTML; csv + `report.html` в папку |
+
+### `tracking` — эксперименты
+
+`Experiment(project, root, version, name, clearml, clearml_offline, tags, overwrite, capture_plots)` —
+см. [Версионирование экспериментов](#версионирование-экспериментов).
+
+| Метод | Что делает |
+|---|---|
+| `exp.log_params(params, name)` | Параметры → `meta.json` и ClearML Configuration |
+| `exp.log_metrics(metrics, prefix)` | Скалярные метрики → `meta.json` и ClearML |
+| `exp.save_features(features, cat_features, target, **extra)` / `exp.load_features()` | `features.json`: признаки, категориальные, таргет |
+| `exp.save_model(model, name)` / `exp.load_model(name)` | Модель → `models/<name>.pkl` |
+| `exp.export_model(model, name, X_check)` | Выгрузка для инференса без библиотеки в `export/<name>/` |
+| `exp.save_table(df, name)` | Таблица → `logs/<name>.csv` |
+| `exp.save_figure(fig, name)` | График → `logs/<name>.html` |
+| `exp.save_result(result, name)` | `Result`: таблица, признаки, `info` и график |
+| `exp.save_pipeline(pipe, name)` | `SelectionPipeline`: сводка, лог, воронка, результаты шагов |
+| `exp.save_report(report, name)` | `ModelReport`: таблицы и графики, локально — `report.html` |
+| `exp.log(obj, name)` | Универсальный вариант: тип объекта определяется сам |
+| `exp.plots_summary(check)` | Что произошло с каждым отправленным в ClearML графиком |
+| `exp.flush()` / `exp.close()` | Дождаться отправки в ClearML / завершить задачу |
+| `Experiment.list_versions(project, root)` | Таблица версий проекта с метриками |
+| `Experiment.current()` | Активный эксперимент с ClearML или `None` |
+
+`tracking.clearml` — функции текущей задачи ClearML; без установленного `clearml` ничего не делают.
+
+| Функция | Что делает |
+|---|---|
+| `init_task(project, name, tags, offline)` / `close_current_task()` | Создать / закрыть задачу |
+| `report_figure(fig, title)` | Plotly-график в Plots; слишком большие фигуры прореживаются |
+| `report_table(df, title)` | Таблица в Plots |
+| `report_metrics(metrics, title)` | Скалярные метрики |
+| `connect_params(params, name)` | Параметры в Configuration |
+| `upload_artifact(name, obj)` | Артефакт задачи |
+| `plots_summary()` / `verify_plots()` | Какие графики отправлены и дошли ли до сервера |
+| `diagnose()` | Проверка, почему графики не попадают в Plots: версии, режим, лимит размера сервера |
+
+### `plotting` — стиль и компоновка графиков
+
+| Функция | Что делает |
+|---|---|
+| `style(fig, title, height, width, xaxis_title, yaxis_title)` | Применяет общий стиль библиотеки |
+| `combine(figures, titles, n_cols, size, title)` | Собирает несколько фигур в одну сетку |
+| `histogram(x, bins, name)` | Гистограмма с предподсчитанными бинами: размер фигуры не зависит от числа строк |
+| `color(i)` / `bar_colors(values)` | i-й цвет палитры / зелёный и красный по знаку значений |
+| `figure_size_mb(fig)` | Размер фигуры в МБ в том виде, в каком она уходит в ClearML |
+| `shrink_figure(fig, max_points)` | Копия фигуры с прореженными длинными массивами точек |
+
+### `config` и `utils`
+
+| Что | Назначение |
+|---|---|
+| `config.LGBM_PARAMS`, `CATBOOST_PARAMS` | Параметры моделей по умолчанию |
+| `config.LGBM_UNIVARIATE_PARAMS`, `LGBM_INCREMENTAL_PARAMS` | Маленькие модели для однофакторной и пошаговой оценки |
+| `config.RANDOM_STATE`, `EARLY_STOPPING_ROUNDS` | 42 и 100 |
+| `config.merge_params(defaults, params)` | Копия дефолтов, обновлённая пользовательскими параметрами |
+| `utils.io.write_csv(df, path)` | CSV, который корректно открывается в Excel (кириллица) |
+| `utils.parallel.tqdm_joblib(total, desc)` | Прогресс-бар tqdm для `joblib.Parallel` |

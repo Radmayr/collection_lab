@@ -159,6 +159,20 @@ code("report.figures['gain_charts']")
 code("report.figures['auc_dynamics']")
 code("report.feature_psi")
 
+md("""
+### PSI признаков по месяцам test относительно train
+
+`report.feature_psi` выше — одно число на признак по всему test. Здесь то же по месяцам: видно,
+когда признак «поехал». Таблица — `report.feature_psi_by_period`.
+""")
+code("""
+report.plot_feature_psi()          # все признаки, самые нестабильные первыми
+# report.plot_feature_psi(["dpd_act", "age"], n_cols=2)   # только выбранные
+""")
+code("""
+report.feature_psi_by_period.pivot_table(index="feature", columns="period", values="psi").round(3)
+""")
+
 md("### Стабильность признаков во времени (`plot_stab`)")
 code("""
 for f in [c for c in selected if c not in cats][:3]:
