@@ -4,6 +4,7 @@
     core        — адаптеры моделей, кросс-валидация, объекты результатов
     data        — типы признаков, сплиты train/val/test без утечек
     eda         — обзор данных, распределения, динамика таргета, винтажи
+    feature_testing — что даст модели добавление новых признаков и доменов данных
     metrics     — AUC/Gini/KS, PSI/CSI, калибровка (gain chart), WoE/IV
     selection   — фильтры, корреляции, однофакторный анализ, RFE, stepwise, пайплайн отбора
     modeling    — обучение, сравнение моделей, Optuna, объём выборки
@@ -21,12 +22,13 @@
     report = cl.validation.model_report(model, split, date_col="rtk_send_date")
 """
 
-__version__ = "0.1.15"
+__version__ = "0.2.0"
 
 from collection_lab import (  # noqa: E402
     core,
     data,
     eda,
+    feature_testing,
     metrics,
     modeling,
     plotting,
@@ -35,5 +37,5 @@ from collection_lab import (  # noqa: E402
     validation,
 )
 
-__all__ = ["core", "data", "eda", "metrics", "modeling", "plotting", "selection", "tracking",
-           "validation"]
+__all__ = ["core", "data", "eda", "feature_testing", "metrics", "modeling", "plotting", "selection",
+           "tracking", "validation"]

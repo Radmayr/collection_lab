@@ -56,7 +56,8 @@ _CURRENT: Experiment | None = None  # активный эксперимент с
 
 def _send_to_clearml(obj, name: str) -> int:
     """Отправляет в ClearML таблицы и графики объекта (без записи на диск); возвращает число
-    отправленных элементов. Поддерживаются Result, ModelReport, SelectionPipeline."""
+    отправленных элементов. Поддерживаются Result, ModelReport, SelectionPipeline, FeatureTest."""
+    from collection_lab.feature_testing.testing import FeatureTest
     from collection_lab.selection.pipeline import SelectionPipeline
     from collection_lab.validation.report import ModelReport
 
@@ -88,6 +89,14 @@ def _send_to_clearml(obj, name: str) -> int:
                 table(getattr(obj, key), f"{name}_{key}")
         for key, fig in obj.figures.items():
             figure(lambda fig=fig: fig, f"{name}_{key}")
+    elif isinstance(obj, FeatureTest):
+        for key in ("summary", "metrics", "segments", "features"):
+            if getattr(obj, key) is not None:
+                table(getattr(obj, key), f"{name}_{key}")
+        figure(obj.plot, f"{name}_delta")
+        figure(obj.plot_metrics, f"{name}_metrics_plot")
+        if obj.segments is not None:
+            figure(obj.plot_segments, f"{name}_segments_plot")
     elif isinstance(obj, SelectionPipeline):
         table(obj.summary(), f"{name}_summary")
         table(obj.log_, f"{name}_log")
@@ -375,12 +384,29 @@ class Experiment:
             self.save_result(result, f"{name}_{key}")
         return self.logs_path
 
+    def save_feature_test(self, test, name: str | None = None) -> Path:
+        """Результат :func:`~collection_lab.feature_testing.test_features` /
+        ``test_domains``: таблицы и графики — в ClearML и в ``logs/<name>/``."""
+        name = name or test.name
+        for key in ("summary", "metrics", "segments", "features"):
+            table = getattr(test, key)
+            if table is not None:
+                self.save_table(table, f"{name}_{key}")
+        with _no_capture():
+            figures = {"delta": test.plot(), "metrics_plot": test.plot_metrics()}
+            if test.segments is not None:
+                figures["segments_plot"] = test.plot_segments()
+        for key, fig in figures.items():
+            self.save_figure(fig, f"{name}_{key}")
+        return self.logs_path
+
     def log(self, obj, name: str | None = None) -> None:
         """Отправить объект библиотеки в эксперимент (локально и в ClearML), тип определяется сам.
 
-        Поддерживаются: ``Result``, ``ModelReport``, ``SelectionPipeline``, ``DataFrame``
-        (нужен ``name``) и plotly-фигура (нужен ``name``).
+        Поддерживаются: ``Result``, ``ModelReport``, ``SelectionPipeline``, ``FeatureTest``,
+        ``DataFrame`` (нужен ``name``) и plotly-фигура (нужен ``name``).
         """
+        from collection_lab.feature_testing.testing import FeatureTest
         from collection_lab.selection.pipeline import SelectionPipeline
         from collection_lab.validation.report import ModelReport
 
@@ -390,6 +416,8 @@ class Experiment:
             self.save_report(obj, name or "report")
         elif isinstance(obj, SelectionPipeline):
             self.save_pipeline(obj, name or "selection")
+        elif isinstance(obj, FeatureTest):
+            self.save_feature_test(obj, name)
         elif isinstance(obj, pd.DataFrame):
             self.save_table(obj, self._need_name(name, "DataFrame"))
         elif hasattr(obj, "to_plotly_json"):

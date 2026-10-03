@@ -8,6 +8,7 @@ LightGBM / CatBoost; регрессия поддерживается ядром)
 [Структура репозитория](#структура-репозитория) ·
 [Версионирование экспериментов](#версионирование-экспериментов) ·
 [Инференс без библиотеки](#подготовка-признаков-и-инференс-без-библиотеки) ·
+[Тестирование новых признаков](#тестирование-новых-признаков) ·
 [Как устроено](#как-устроено) · [Справочник функций](#справочник-функций)
 
 ## Установка
@@ -80,6 +81,7 @@ with cl.tracking.Experiment("RTK_model", clearml=True) as exp:
 | 1 | [01_eda_overview](examples/01_eda_overview.ipynb) | Что лежит в таблице и как пользоваться каждой функцией `eda` |
 | 2 | [02_vintage_overview](examples/02_vintage_overview.ipynb) | Сколько и когда возвращается после отправки в РТК — по продуктам, типам транзакций, когортам |
 | 3 | [03_rtk_pipeline](examples/03_rtk_pipeline.ipynb) | Как построить модель от данных до отчёта и сохранённого эксперимента |
+| 4 | [04_feature_testing](examples/04_feature_testing.ipynb) | Что даст модели добавление новых признаков и доменов данных |
 
 Что считает каждый и как запустить — в [examples/README.md](examples/README.md).
 
@@ -91,7 +93,7 @@ with cl.tracking.Experiment("RTK_model", clearml=True) as exp:
 ```
 collection_lab/
 ├── src/collection_lab/   библиотека (модули — в таблице «Как устроено» ниже)
-├── examples/             ноутбуки-примеры 01–03, их описание и скрипты-сборщики (builders/)
+├── examples/             ноутбуки-примеры 01–04, их описание и скрипты-сборщики (builders/)
 ├── tests/                тесты: pytest; медленные помечены slow
 ├── README.md             этот файл
 ├── CHANGELOG.md          что менялось по версиям
@@ -151,6 +153,48 @@ scores = inference.predict(df)          # df — таблица с колонк�
 - Свои преобразования (feature engineering и т.п.), выполняемые до стандартной подготовки,
   прописываются в `custom_preprocess(df)` внутри `inference.py`.
 
+## Тестирование новых признаков
+
+Раздел `feature_testing` отвечает на вопрос «что даст модели добавление этих признаков» —
+приростом метрик с доверительным интервалом, в целом и по сегментам. Полный пример —
+[04_feature_testing](examples/04_feature_testing.ipynb).
+
+```python
+# несколько признаков: каждый отдельно и все вместе (строка ALL)
+test = cl.feature_testing.test_features(split, base, candidates, segment="product",
+                                        date_col="rtk_send_date")
+test.summary; test.plot(); test.plot_segments(); test.plot_metrics()
+test.replacement().table        # добавить или заменить похожий признак базы
+
+# домен данных — группа признаков из одного источника, оценивается целиком
+domains = cl.feature_testing.test_domains(split, base, {"транзакции": [...], "бюро": [...]})
+domains.summary; domains.features; domains.plot_domain("транзакции")
+```
+
+Что передать в `base` и какой способ сравнения получится:
+
+| Что есть | `base` | Способ по умолчанию |
+|---|---|---|
+| Список признаков | `base=selected` | `retrain` — база и «база + кандидаты» с одинаковыми параметрами |
+| Разработанная модель | `base=model`, путь к `.pkl` эксперимента, папка экспорта, нативный LightGBM / CatBoost или его файл | `retrain` — признаки и гиперпараметры берутся из модели |
+| Только скор модели | `base="score_col"` — колонка с вероятностью | `on_top` — LightGBM поверх скора только на кандидатах |
+
+- **`how="retrain"`** отвечает на вопрос «какой станет модель», **`how="on_top"`** — «есть ли в
+  кандидатах то, чего нет в модели». Для модели можно задать `how="on_top"` явно. Если скор на
+  train посчитан моделью, обученной на этих же строках, прирост по CV в режиме `on_top`
+  занижен — ориентир даёт test.
+- **Дельты** — «насколько стало лучше»: `> 0` — кандидат улучшил метрику (для `logloss` и
+  `brier` знак уже перевёрнут).
+- **Вердикт** `better` / `same` / `worse` ставится по интервалу прироста на кросс-валидации
+  train (целиком выше нуля, захватывает ноль, целиком ниже). Test только показывается — с
+  бутстрап-интервалом. Вердикт — подсказка, решение за вами.
+- **Метрики** — `metrics=("auc", "gini", "ks", "logloss", "pr_auc", "brier", "lift@10%")` по
+  умолчанию; первая — основная. Список можно сократить или дополнить своей функцией.
+- **Много кандидатов** — если их больше `max_exact` (20), сначала идёт быстрый отсев, точно
+  оцениваются лучшие; на больших данных кросс-валидация идёт на подвыборке (`max_rows`).
+- **Неполное заполнение** — в сводке видно покрытие, период заполнения и прирост только по
+  строкам, где кандидат заполнен.
+
 ## Как устроено
 
 - **Единый движок.** Все методы обучают модели через `core.cross_validate` и адаптеры
@@ -168,6 +212,7 @@ scores = inference.predict(df)          # df — таблица с колонк�
 |---|---|
 | `data` | `split_feature_types`, `cast_types`, `time_split`, `random_split`, `DataSplit` |
 | `core` | `make_model`, `LGBMModel`, `CatBoostModel`, `FeaturePreparer`, `cross_validate`, `make_folds`, `Result` |
+| `feature_testing` | `test_features`, `test_domains`, `FeatureTest` |
 | `eda` | `overview`, `target_summary`, `plot_distribution`, `plot_target_rate_by_bins`, `target_dynamics`, `vintage`, `vintage_by_type`, `vintage_by_segment`, `maturation_transactions`, `plot_vintage`, `eda_transactions`, `add_days_since` |
 | `metrics` | `roc_auc`, `gini`, `ks`, `metrics_by_segment`, `psi`, `psi_table`, `feature_psi`, `psi_by_period`, `gain_chart`, `gain_chart_metrics`, `hosmer_lemeshow`, `information_value`, `iv_table` |
 | `selection` | `quality_filter`, `correlation_filter`, `univariate_scores`, `cumulative_importance_selection`, `drop_column_importance`, `permutation_importance`, `rfe`, `backward_elimination`, `forward_addition`, `incremental_feature_eval`, `SelectionPipeline` |
@@ -189,7 +234,7 @@ scores = inference.predict(df)          # df — таблица с колонк�
 | `features` | Список признаков; по умолчанию — все колонки таблицы |
 | `cat_features` | Категориальные признаки; по умолчанию определяются автоматически |
 | `model`, `params` | `"lgbm"` / `"catboost"` или готовый адаптер; `params` дополняют дефолты из `config.py` |
-| `metric` | `"auc"`, `"gini"`, `"ks"`, `"logloss"` или своя функция `f(y_true, y_pred)` |
+| `metric` | `"auc"`, `"gini"`, `"ks"`, `"logloss"`, `"pr_auc"`, `"brier"`, `"lift@10%"` или своя функция `f(y_true, y_pred)` |
 | `segments` | Колонка или массив меток — метрика считается ещё и по каждому сегменту |
 | `folds` / `n_splits` | Готовые фолды из `core.make_folds` или их число (`<= 1` — holdout) |
 
@@ -286,7 +331,10 @@ scores = inference.predict(df)          # df — таблица с колонк�
 | `ks(y_true, y_pred)` | Статистика Колмогорова–Смирнова между скорами классов | `float` |
 | `logloss(y_true, y_pred)` | Log loss по вероятностям класса 1 | `float` |
 | `metrics_by_segment(y_true, y_pred, segments, metrics, min_size, add_total)` | Метрики по сегментам (+ строка `ALL`) | `DataFrame` |
-| `get_metric(metric)` | Метрика по имени или функции вместе с направлением оптимизации | `Metric` |
+| `pr_auc(y_true, y_pred)` | Площадь под PR-кривой | `float` |
+| `brier(y_true, y_pred)` | Средний квадрат ошибки вероятности | `float` |
+| `lift(y_true, y_pred, share)` | Доля таргета в верхней доле `share` по скору относительно всей выборки | `float` |
+| `get_metric(metric)` | Метрика по имени (включая `"lift@10%"`) или функции вместе с направлением оптимизации | `Metric` |
 
 Стабильность (PSI). Бины числового признака — квантили базовой выборки, пропуски — отдельный бин `NaN`;
 `< 0.1` — stable, `0.1–0.25` — moderate, `> 0.25` — significant.
@@ -367,6 +415,28 @@ WoE / IV:
 | `lgbm_search_space(trial)`, `catboost_search_space(trial)` | Пространства поиска по умолчанию | `dict` параметров |
 | `sample_size_curve(split, features, sizes, n_repeats, ...)` | Как метрика зависит от объёма обучающей выборки | `Result` |
 
+### `feature_testing` — новые признаки и домены
+
+| Функция | Что делает | Возвращает |
+|---|---|---|
+| `test_features(split, base, candidates, how, segment, date_col, metrics, params, n_splits, n_repeats, max_exact, max_rows, n_boot, alpha)` | Прирост от каждого кандидата и от всех вместе относительно базы | `FeatureTest` |
+| `test_domains(split, base, domains, ...)` | Прирост от каждого домена целиком; покрытие, качество домена в одиночку, вклад признаков внутри домена | `FeatureTest` |
+
+`FeatureTest`:
+
+| Атрибут / метод | Что это |
+|---|---|
+| `test.summary` | Строка на кандидата (и `ALL`) или на домен: покрытие, однофакторный AUC, корреляция с базой, PSI, прирост по CV с интервалом, прирост на val и test, худший сегмент, вердикт |
+| `test.metrics` | Все метрики: `name, part (cv / val / test), metric, base, new, delta, ci_low, ci_high` |
+| `test.segments` | То же по сегментам: `name, part, segment, n, metric, base, new, delta` |
+| `test.features` | Для доменов: `domain, feature, importance, share, coverage, uni_auc` |
+| `test.plot()` | Прирост основной метрики с интервалами: CV на train и test |
+| `test.plot_segments(metric, part)` | Прирост по сегментам: кандидаты × сегменты |
+| `test.plot_metrics(part)` | Прирост всех метрик в % от базы |
+| `test.plot_domain(name)` | Вклад признаков внутри домена |
+| `test.replacement(threshold=0.7)` | Для кандидатов, похожих на признак базы: прирост при добавлении и при замене этого признака (`Result` с `table` и `plot()`) |
+| `test.save(directory)` | Таблицы в csv, параметры запуска в json |
+
 ### `validation` — стабильность и отчёт по модели
 
 | Функция | Что делает | Возвращает |
@@ -409,6 +479,7 @@ WoE / IV:
 | `exp.save_result(result, name)` | `Result`: таблица, признаки, `info` и график |
 | `exp.save_pipeline(pipe, name)` | `SelectionPipeline`: сводка, лог, воронка, результаты шагов |
 | `exp.save_report(report, name)` | `ModelReport`: таблицы и графики, локально — `report.html` |
+| `exp.save_feature_test(test, name)` | `FeatureTest`: таблицы и графики прироста |
 | `exp.log(obj, name)` | Универсальный вариант: тип объекта определяется сам |
 | `exp.plots_summary(check)` | Что произошло с каждым отправленным в ClearML графиком |
 | `exp.flush()` / `exp.close()` | Дождаться отправки в ClearML / завершить задачу |

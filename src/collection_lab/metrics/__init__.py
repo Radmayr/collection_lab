@@ -18,11 +18,14 @@ from collection_lab.metrics.calibration import (
 from collection_lab.metrics.classification import (
     METRICS,
     Metric,
+    brier,
     get_metric,
     gini,
     ks,
+    lift,
     logloss,
     metrics_by_segment,
+    pr_auc,
     roc_auc,
 )
 from collection_lab.metrics.stability import (
@@ -38,6 +41,7 @@ from collection_lab.metrics.stability import (
 __all__ = [
     "METRICS",
     "Metric",
+    "brier",
     "calibration_offset",
     "feature_psi",
     "full_calibration",
@@ -50,8 +54,10 @@ __all__ = [
     "information_value",
     "iv_table",
     "ks",
+    "lift",
     "logloss",
     "metrics_by_segment",
+    "pr_auc",
     "prob_to_logit",
     "psi",
     "psi_by_period",

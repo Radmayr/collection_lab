@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from functools import partial
 
 import numpy as np
 import pandas as pd
 from scipy.stats import ks_2samp
-from sklearn.metrics import log_loss, roc_auc_score
+from sklearn.metrics import average_precision_score, log_loss, roc_auc_score
 
 
 def roc_auc(y_true, y_pred) -> float:
@@ -39,6 +41,30 @@ def logloss(y_true, y_pred) -> float:
     return float(log_loss(y_true, np.clip(y_pred, 1e-15, 1 - 1e-15), labels=[0, 1]))
 
 
+def pr_auc(y_true, y_pred) -> float:
+    """Площадь под PR-кривой (average precision); ``NaN``, если в ``y_true`` один класс."""
+    y_true = np.asarray(y_true)
+    if len(np.unique(y_true)) < 2:
+        return float("nan")
+    return float(average_precision_score(y_true, y_pred))
+
+
+def brier(y_true, y_pred) -> float:
+    """Brier score: средний квадрат ошибки вероятности (меньше — лучше)."""
+    return float(np.mean((np.asarray(y_pred, dtype="float64") - np.asarray(y_true)) ** 2))
+
+
+def lift(y_true, y_pred, share: float = 0.1) -> float:
+    """Lift в верхней доле ``share`` по скору: доля таргета в ней / доля таргета во всей выборке."""
+    y_true = np.asarray(y_true, dtype="float64")
+    total = y_true.mean() if len(y_true) else 0.0
+    if not total:
+        return float("nan")
+    k = max(1, int(round(len(y_true) * share)))
+    top = np.argsort(-np.asarray(y_pred), kind="stable")[:k]
+    return float(y_true[top].mean() / total)
+
+
 @dataclass(frozen=True)
 class Metric:
     """Метрика и направление оптимизации."""
@@ -60,15 +86,23 @@ METRICS: dict[str, Metric] = {
     "gini": Metric("gini", gini),
     "ks": Metric("ks", ks),
     "logloss": Metric("logloss", logloss, greater_is_better=False),
+    "pr_auc": Metric("pr_auc", pr_auc),
+    "brier": Metric("brier", brier, greater_is_better=False),
 }
+_LIFT = re.compile(r"lift@(\d+(?:\.\d+)?)%?")
 
 
 def get_metric(metric: str | Metric | Callable) -> Metric:
-    """Возвращает :class:`Metric` по имени (``'auc'``, ``'gini'``, ``'ks'``, ``'logloss'``),
+    """Возвращает :class:`Metric` по имени (``'auc'``, ``'gini'``, ``'ks'``, ``'logloss'``,
+    ``'pr_auc'``, ``'brier'``, ``'lift@10%'`` — lift в верхних 10% по скору, процент любой),
     объекту Metric или произвольной функции ``f(y_true, y_pred)`` (считается «больше — лучше»)."""
     if isinstance(metric, Metric):
         return metric
     if isinstance(metric, str):
+        m = _LIFT.fullmatch(metric)
+        if m:
+            pct = float(m.group(1))
+            return Metric(f"lift@{pct:g}%", partial(lift, share=pct / 100))
         try:
             return METRICS[metric]
         except KeyError:
