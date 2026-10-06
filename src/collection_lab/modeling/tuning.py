@@ -19,7 +19,7 @@ from collection_lab.plotting.theme import style
 
 
 def lgbm_search_space(trial) -> dict[str, Any]:
-    """Пространство поиска LightGBM из ноутбука RTK (неглубокие деревья, регуляризация)."""
+    """Пространство поиска LightGBM (неглубокие деревья, регуляризация)."""
     return {
         "num_leaves": trial.suggest_int("num_leaves", 4, 16),
         "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
@@ -63,8 +63,7 @@ def tune_hyperparams(
     """Optuna-поиск: каждое испытание обучается на train, оценивается на val.
 
     Лучшие параметры выбираются **только по val**. Метрика на test записывается в таблицу
-    для контроля переобучения, но в выборе не участвует (в ноутбуке RTK лучший набор
-    выбирался по test — это утечка).
+    для контроля переобучения, но в выборе не участвует.
 
     Parameters
     ----------

@@ -90,3 +90,19 @@ def test_make_demo_data():
     assert df.loc[df["report_date"] < "2023-07-01", DEMO_DOMAINS["транзакции"]].isna().all().all()
     assert df["bureau_dpd_max_12m"].corr(df["dpd_max_12m"]) > 0.6
     pd.testing.assert_frame_equal(df, make_demo_data(n=2000))
+
+
+def test_make_demo_transactions():
+    from collection_lab.data import DEMO_PROCESSED_DT, make_demo_transactions
+    from collection_lab.eda import add_days_since, vintage_by_segment
+
+    df = make_demo_transactions(n_contracts=800)
+    assert df["contract_id"].nunique() == 800 and df["product"].nunique() == 3
+    assert df["tx_amount"].isna().any() and (df["tx_amount"] < 0).any()
+    assert df["tx_date"].max() <= pd.Timestamp(DEMO_PROCESSED_DT)
+    assert (df.groupby("contract_id")["balance"].nunique() == 1).all()
+    df = add_days_since(df, "tx_date", "start_date", "tx_days")
+    table, _ = vintage_by_segment(
+        df, "product", client_id="contract_id", tx_amount_col="tx_amount", balance_col="balance",
+        retro_dt_col="start_date", horizon_days=365, step=30, processed_dt=DEMO_PROCESSED_DT)
+    assert table["cum_share_of_balance"].max() > 0

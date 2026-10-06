@@ -37,8 +37,8 @@ import collection_lab as cl
 # типы и сплит без утечек: test — out-of-time, отбор только на train
 num_cols, cat_cols = cl.data.split_feature_types(df, features)
 df = cl.data.cast_types(df, num_cols, cat_cols, target_col="target")
-split = cl.data.time_split(df, "target", "rtk_send_date", oot_from="2024-03-01")
-split.summary("rtk_send_date")
+split = cl.data.time_split(df, "target", "report_date", oot_from="2024-03-01")
+split.summary("report_date")
 
 # отбор признаков — цепочка шагов с общим логом
 pipe = cl.selection.SelectionPipeline([
@@ -52,12 +52,12 @@ pipe.summary(); pipe.log_; pipe.plot()
 # обучение, подбор параметров (выбор по val), отчёт
 tune = cl.modeling.tune_hyperparams(split, pipe.selected_, n_trials=50)
 model = cl.modeling.train_model(split, pipe.selected_, params=tune.info["best_params"])
-report = cl.validation.model_report(model, split, date_col="rtk_send_date")
+report = cl.validation.model_report(model, split, date_col="report_date")
 report.show()
 report.plot_feature_psi()        # PSI каждого признака по месяцам test относительно train
 
 # эксперимент: папки v_N, модель, признаки, метрики (+ ClearML)
-with cl.tracking.Experiment("RTK_model", clearml=True) as exp:
+with cl.tracking.Experiment("my_model", clearml=True) as exp:
     exp.save_model(model); exp.save_features(pipe.selected_, cat_features=cat_cols)
     exp.save_pipeline(pipe)      # сводка, лог, воронка, результаты шагов
     exp.save_report(report)      # метрики, калибровка, gain chart, важности, динамика
@@ -79,17 +79,18 @@ with cl.tracking.Experiment("RTK_model", clearml=True) as exp:
 | № | Ноутбук | На какой вопрос отвечает |
 |---|---|---|
 | 1 | [01_eda_overview](examples/01_eda_overview.ipynb) | Что лежит в таблице и как пользоваться каждой функцией `eda` |
-| 2 | [02_vintage_overview](examples/02_vintage_overview.ipynb) | Сколько и когда поступает после контрольной даты — по продуктам, типам транзакций, когортам |
-| 3 | [03_rtk_pipeline](examples/03_rtk_pipeline.ipynb) | Как построить модель от данных до отчёта и сохранённого эксперимента |
+| 2 | [02_vintage_overview](examples/02_vintage_overview.ipynb) | Сколько и когда поступает после контрольной даты — по сегментам, типам транзакций, когортам |
+| 3 | [03_model_pipeline](examples/03_model_pipeline.ipynb) | Как построить модель от данных до отчёта и сохранённого эксперимента (LightGBM) |
 | 4 | [04_feature_testing](examples/04_feature_testing.ipynb) | Что даст модели добавление новых признаков и доменов данных |
 | 5 | [05_catboost_pipeline](examples/05_catboost_pipeline.ipynb) | Как построить модель, если финальная модель — CatBoost |
 
-Ноутбуки 4 и 5 работают на встроенных демо-данных (`cl.data.make_demo_data()`) и переносятся на
-свою таблицу правкой одной ячейки «Настройки». Что считает каждый и как запустить — в
+Все ноутбуки работают на встроенных демо-данных (`cl.data.make_demo_data()`,
+`cl.data.make_demo_transactions()`) и переносятся на свою таблицу правкой одной ячейки
+«Настройки». Что считает каждый, какая таблица нужна на входе и как запустить — в
 [examples/README.md](examples/README.md).
 
-Пример отдельного проекта на библиотеке — отчёт по включению в РТК — ведётся в своём репозитории
-[rtk_recovery](https://github.com/Radmayr/rtk_recovery-): библиотека содержит только функции, расчёты под конкретную задачу — в проектах.
+Библиотека содержит только функции; расчёты под конкретную задачу ведутся в отдельных проектах —
+например, [rtk_recovery](https://github.com/Radmayr/rtk_recovery-).
 
 ## Структура репозитория
 
@@ -105,7 +106,7 @@ collection_lab/
 
 ## Версионирование экспериментов
 
-`tracking.Experiment("RTK_model", root=..., clearml=True)` — один запуск = одна версия.
+`tracking.Experiment("my_model", root=..., clearml=True)` — один запуск = одна версия.
 
 | | Локально | В ClearML |
 |---|---|---|
@@ -118,7 +119,7 @@ collection_lab/
   повторно. Лучше оформлять запуск как `with Experiment(...) as exp:` — задача закроется сама.
 - **Ошибка ClearML** при создании задачи не оставляет пустой локальной папки версии и не
   «сжигает» номер.
-- **Список версий:** `Experiment.list_versions("RTK_model", root=...)` — таблица версий с
+- **Список версий:** `Experiment.list_versions("my_model", root=...)` — таблица версий с
   метриками из `meta.json`.
 
 ## Подготовка признаков и инференс без библиотеки
@@ -135,7 +136,7 @@ collection_lab/
 `collection_lab`:
 
 ```python
-info = model.export("export/rtk_v3", X_check=split.test)   # или exp.export_model(model, "final")
+info = model.export("export/my_model", X_check=split.test)   # или exp.export_model(model, "final")
 # model.txt | model.cbm   — модель в нативном формате
 # preprocessing.json      — порядок признаков, категориальные, их категории, обозначения пропусков
 # inference.py            — prepare(df) и predict(df); не импортирует collection_lab
@@ -213,7 +214,7 @@ domains.summary; domains.features; domains.plot_domain("транзакции")
 
 | Модуль | Что внутри |
 |---|---|
-| `data` | `split_feature_types`, `cast_types`, `time_split`, `random_split`, `DataSplit`, `make_demo_data` |
+| `data` | `split_feature_types`, `cast_types`, `time_split`, `random_split`, `DataSplit`, `make_demo_data`, `make_demo_transactions` |
 | `core` | `make_model`, `LGBMModel`, `CatBoostModel`, `FeaturePreparer`, `cross_validate`, `make_folds`, `Result` |
 | `feature_testing` | `test_features`, `test_domains`, `FeatureTest` |
 | `eda` | `overview`, `target_summary`, `plot_distribution`, `plot_target_rate_by_bins`, `target_dynamics`, `vintage`, `vintage_by_type`, `vintage_by_segment`, `maturation_transactions`, `plot_vintage`, `eda_transactions`, `add_days_since` |
@@ -255,6 +256,7 @@ domains.summary; domains.features; domains.plot_domain("транзакции")
 | `time_split(df, target, date_col, oot_from, oot_to, val_size, val_mode)` | Out-of-time сплит: test — строки с датой `>= oot_from`, остальное делится на train / val (`val_mode="random"` или `"time"` — последние по дате) | `DataSplit` |
 | `random_split(df, target, val_size, test_size, stratify)` | Случайный стратифицированный сплит | `DataSplit` |
 | `make_demo_data(n, random_state)` | Синтетическая таблица для примеров: таргет, дата, сегмент и признаки четырёх доменов (`DEMO_DOMAINS`) | `DataFrame` |
+| `make_demo_transactions(n_contracts, random_state)` | Синтетическая таблица транзакций по договорам для винтажей; актуальна на `DEMO_PROCESSED_DT` | `DataFrame` |
 
 `DataSplit` — части `train`, `val`, `test` и имя таргета; при создании проверяется, что части не пересекаются.
 

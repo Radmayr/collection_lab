@@ -2,7 +2,7 @@
 
 Пример::
 
-    with Experiment("RTK_model", root="/workdir", clearml=True) as exp:   # v_1, v_2, ...
+    with Experiment("my_model", root="/workdir", clearml=True) as exp:   # v_1, v_2, ...
         exp.log_params(params)
         exp.save_features(features, cat_features=cats, target="target")
         exp.save_model(model)
@@ -10,7 +10,7 @@
         exp.save_result(rfe_result)
         exp.save_figure(fig, "gain_chart")
 
-    Experiment.list_versions("RTK_model", root="/workdir")   # все версии и их метрики
+    Experiment.list_versions("my_model", root="/workdir")   # все версии и их метрики
 
 Структура на диске::
 

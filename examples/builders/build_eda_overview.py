@@ -6,7 +6,8 @@
 комментарием, что в них передаётся — это справочник по `eda`, а не быстрый рецепт.
 
 Выполнить с сохранением графиков:
-    jupyter nbconvert --to notebook --execute --inplace examples/01_eda_overview.ipynb
+    jupyter nbconvert --to notebook --execute examples/01_eda_overview.ipynb \
+        --output 01_eda_overview_executed.ipynb
 """
 
 from pathlib import Path
@@ -27,17 +28,18 @@ def code(text: str) -> None:
 md("""
 # `collection_lab.eda` — обзор всех функций
 
-Один прогон каждой функции модуля `eda` на транзакционных данных RTK (`df_1.csv`):
-таблица со сделками (party, contract, транзакция, даты, суммы, баланс) — типичный вход для
-`vintage` / `eda_transactions`, а не для моделирования, поэтому пример отдельный от
-`03_rtk_pipeline.ipynb`.
+Один прогон каждой функции модуля `eda` на таблице транзакций по договорам: одна строка — либо
+одна транзакция, либо договор без транзакций (поля транзакции пустые).
+
+Ноутбук работает на встроенных демо-данных. **Чтобы запустить на своих — поменяйте только
+ячейку «Настройки».**
 
 **Каждый вызов ниже прописывает все параметры функции явно**, даже те, что равны значению по
 умолчанию, — с комментарием, что в них передаётся. Так видно полный набор настроек, а не только
 то, что понадобилось для примера.
 
 1. данные;
-2. `overview`, `target_summary` — сводка по колонкам и по флагу `ispol_doc_flg`;
+2. `overview`, `target_summary` — сводка по колонкам и по флагу договора;
 3. `plot_distribution`, `plot_target_rate_by_bins` — распределения и связь с флагом;
 4. `wilson_ci`, `target_dynamics` — доля флага во времени с доверительным интервалом;
 5. `add_days_since`, `vintage`, `vintage_by_type`, `vintage_by_segment` — винтажи
@@ -52,20 +54,44 @@ import plotly.io as pio
 import collection_lab as cl
 
 pio.renderers.default = "notebook_connected+plotly_mimetype"
-DATA = "D:/ML_lib/RTK_model/RTK_model/data/df_1.csv"
+""")
+
+md("""
+## Настройки
+
+Единственная ячейка, которую нужно менять под свои данные.
+""")
+code("""
+# --- данные ---------------------------------------------------------------------------
+df = cl.data.make_demo_transactions()   # свои данные: df = pd.read_csv("путь/к/таблице.csv")
+PROCESSED_DT = cl.data.DEMO_PROCESSED_DT   # дата актуальности выгрузки, например "2026-09-01"
+
+# --- колонки уровня договора (одинаковы во всех строках договора) -----------------------
+CONTRACT = "contract_id"     # идентификатор договора / клиента
+START_DATE = "start_date"    # контрольная дата договора: от неё считаются дни до транзакции
+BALANCE = "balance"          # баланс договора на контрольную дату
+SEGMENT = "product"          # разрез договоров: продукт, канал, ...
+FLAG = "flag"                # бинарный признак договора 0 / 1 — «таргет» в разделах 2–4
+
+# --- колонки транзакции (пустые у договора без транзакций) -------------------------------
+TX_DATE = "tx_date"          # дата транзакции
+TX_AMOUNT = "tx_amount"      # сумма транзакции
+TX_TYPE = "tx_type"          # разрез транзакций: тип операции, направление, ...
+
+# --- расчёт винтажей ------------------------------------------------------------------
+HORIZON_DAYS = 540           # горизонт в днях от контрольной даты
+STEP = 7                     # шаг по дням: 1 — по дням, 7 — по неделям
 """)
 
 md("""
 ## 1. Данные
 
-Одна строка — либо договор без транзакций (в этом случае поля транзакции пустые), либо одна
-транзакция по договору. `ispol_doc_flg` — флаг исполнительного производства, задан на уровне
-договора (не меняется от строки к строке) и играет здесь роль «таргета» для примеров.
+Колонки уровня договора повторяются в каждой его строке. Флаг `FLAG` задан на уровне договора и
+играет здесь роль «таргета» для примеров.
 """)
 code("""
-df = pd.read_csv(DATA, low_memory=False)
-df["rtk_send_date"] = pd.to_datetime(df["rtk_send_date"], format="ISO8601").dt.normalize()
-print(df.shape, "| договоров:", df["contract_number"].nunique())
+df[START_DATE] = pd.to_datetime(df[START_DATE], format="mixed").dt.normalize()
+print(df.shape, "| договоров:", df[CONTRACT].nunique())
 df.head(3)
 """)
 
@@ -82,20 +108,20 @@ cl.eda.overview(
 )
 """)
 code("""
-# ispol_doc_flg не меняется внутри договора — берём по одной строке на договор
-clients = df.drop_duplicates("contract_number")
+# флаг не меняется внутри договора — берём по одной строке на договор
+clients = df.drop_duplicates(CONTRACT)
 
 cl.eda.target_summary(
     df=clients,
-    target="ispol_doc_flg",  # колонка-флаг, по которой считаем n / n_target / target_rate
+    target=FLAG,  # колонка-флаг, по которой считаем n / n_target / target_rate
     by=None,  # None = сводка по всей выборке целиком (не по группам)
 )
 """)
 code("""
 cl.eda.target_summary(
     df=clients,
-    target="ispol_doc_flg",
-    by="financial_account_subtype_cd",  # разрез: отдельная строка на каждое значение колонки
+    target=FLAG,
+    by=SEGMENT,  # разрез: отдельная строка на каждое значение колонки
 )
 """)
 
@@ -108,7 +134,7 @@ md("""
 code("""
 cl.eda.plot_distribution(
     data=clients,
-    col="rtk_balance",  # какую колонку data строим (data — DataFrame, поэтому col обязателен)
+    col=BALANCE,  # какую колонку data строим (data — DataFrame, поэтому col обязателен)
     clip_low=0.01,  # нижний квантиль обрезки перед отрисовкой
     clip_high=0.99,  # верхний квантиль обрезки
     force_log=None,  # None = лог-шкала включается сама, если skew > 2 и все значения > 0
@@ -119,10 +145,10 @@ cl.eda.plot_distribution(
 code("""
 cl.eda.plot_distribution(
     data=df,
-    col="transaction_amt",
+    col=TX_AMOUNT,
     clip_low=0.01,
     clip_high=0.99,
-    force_log=None,  # здесь останется линейная шкала: в сумме транзакции есть отрицательные
+    force_log=None,  # останется линейная шкала, если среди сумм есть отрицательные
     bins=100,
     title=None,
 )
@@ -130,8 +156,8 @@ cl.eda.plot_distribution(
 code("""
 cl.eda.plot_target_rate_by_bins(
     df=clients,
-    col="rtk_balance",  # числовой признак, который бьём на бины
-    target="ispol_doc_flg",  # доля этой колонки считается в каждом бине
+    col=BALANCE,  # числовой признак, который бьём на бины
+    target=FLAG,  # доля этой колонки считается в каждом бине
     bins=8,  # число квантильных бинов
     title=None,  # None = заголовок «Доля таргета по бинам <col>»
 )
@@ -145,7 +171,7 @@ md("""
 и сегментам сама и сразу возвращает объект с `.plot()`.
 """)
 code("""
-# доверительный интервал вручную: 30 «плохих» из 100 наблюдений против 3 из 50
+# доверительный интервал вручную: 30 «положительных» из 100 наблюдений против 3 из 50
 lo, hi = cl.eda.wilson_ci(
     k=[30, 3],  # число «положительных» наблюдений в каждой группе
     n=[100, 50],  # размер каждой группы
@@ -154,12 +180,12 @@ lo, hi = cl.eda.wilson_ci(
 list(zip(lo.round(3), hi.round(3), strict=True))
 """)
 code("""
-top_types = clients["financial_account_subtype_cd"].value_counts().head(4).index
+top_segments = clients[SEGMENT].value_counts().head(4).index
 dyn = cl.eda.target_dynamics(
-    df=clients[clients["financial_account_subtype_cd"].isin(top_types)],
-    date_col="rtk_send_date",  # по какой дате группируем в периоды
-    target_col="ispol_doc_flg",  # доля этой колонки считается в каждом периоде
-    segment_col="financial_account_subtype_cd",  # None = без разреза, одна линия
+    df=clients[clients[SEGMENT].isin(top_segments)],
+    date_col=START_DATE,  # по какой дате группируем в периоды
+    target_col=FLAG,  # доля этой колонки считается в каждом периоде
+    segment_col=SEGMENT,  # None = без разреза, одна линия
     freq="Q",  # период агрегации: "D"/"W"/"M"/"Q"
     alpha=0.05,  # уровень значимости доверительного интервала Уилсона
     segment_order=None,  # None = сегменты идут в алфавитном порядке
@@ -174,8 +200,8 @@ dyn.table.head()
 md("""
 ## 5. Винтажи
 
-Работаем с основным продуктом (`PHX`) и договорами не позже 2024-06-01 — как в исходном
-ноутбуке `sample_overview`. `add_days_since` считает число дней от отправки в РТК до транзакции.
+Работаем с самым крупным сегментом. `add_days_since` считает число дней от контрольной даты до
+транзакции.
 
 `vintage` объединяет расчёт (`maturation_transactions`) и график (`plot_vintage`) в один вызов —
 для одной выборки за раз. Обе функции остаются доступны и по отдельности: `vintage_by_type`
@@ -187,27 +213,29 @@ md("""
 (проверка — в конце раздела). Договоры без транзакций отдельным типом не считаются.
 """)
 code("""
-phx = df[(df["financial_account_subtype_cd"] == "PHX") & (df["rtk_send_date"] <= "2024-06-01")]
-phx = cl.eda.add_days_since(
-    df=phx,
-    event_col="real_transaction_dttm",  # дата события (транзакции)
-    base_col="rtk_send_date",  # дата отсчёта (отправка в РТК)
+df = cl.eda.add_days_since(
+    df=df,
+    event_col=TX_DATE,  # дата события (транзакции)
+    base_col=START_DATE,  # дата отсчёта (контрольная дата)
     name="tx_days",  # имя новой колонки: event - base, в днях
 )
-phx[["contract_number", "rtk_send_date", "real_transaction_dttm", "tx_days"]].head(3)
+MAIN = clients[SEGMENT].value_counts().index[0]  # самый крупный сегмент
+main = df[df[SEGMENT] == MAIN]
+print("сегмент:", MAIN, "| договоров:", main[CONTRACT].nunique())
+main[[CONTRACT, START_DATE, TX_DATE, "tx_days"]].dropna().head(3)
 """)
 code("""
 data, fig = cl.eda.vintage(
-    df=phx,
-    sample="PHX",  # метка выборки — попадёт в легенду графика и колонку sample таблицы
-    client_id="contract_number",  # колонка с идентификатором клиента/договора
-    tx_days_col="tx_days",  # дни от ретро-даты (посчитаны add_days_since)
-    tx_amount_col="transaction_amt",  # сумма транзакции
-    balance_col="rtk_balance",  # баланс клиента на ретро-дату
-    retro_dt_col="rtk_send_date",  # сама ретро-дата
-    horizon_days=730,  # горизонт винтажа в днях (урезается, если данные ещё не «дозрели»)
-    step=7,  # шаг агрегации по дням (7 = понедельно)
-    processed_dt="2026-09-01",  # дата актуальности данных — от неё считается урезание горизонта
+    df=main,
+    sample=str(MAIN),  # метка выборки — попадёт в легенду графика и колонку sample таблицы
+    client_id=CONTRACT,  # колонка с идентификатором клиента/договора
+    tx_days_col="tx_days",  # дни от контрольной даты (посчитаны add_days_since)
+    tx_amount_col=TX_AMOUNT,  # сумма транзакции
+    balance_col=BALANCE,  # баланс договора на контрольную дату
+    retro_dt_col=START_DATE,  # сама контрольная дата
+    horizon_days=HORIZON_DAYS,  # горизонт винтажа (урезается, если данные ещё не «дозрели»)
+    step=STEP,  # шаг агрегации по дням (7 = понедельно)
+    processed_dt=PROCESSED_DT,  # дата актуальности данных — от неё считается урезание горизонта
     population=None,  # None = база клиентов берётся из df, а не из отдельной таблицы
     y="cum_share_of_balance",  # что откладываем по Y: накопленная доля транзакций от баланса
     title=None,  # None = заголовок «Винтаж: <человекочитаемое имя y>»
@@ -220,18 +248,18 @@ code("""
 data.tail(3)
 """)
 code("""
-# та же таблица, но по оси Y — доля клиентов, у которых уже была хотя бы одна транзакция
+# та же таблица, но по оси Y — доля договоров, у которых уже была хотя бы одна транзакция
 _, fig = cl.eda.vintage(
-    df=phx,
-    sample="PHX",
-    client_id="contract_number",
+    df=main,
+    sample=str(MAIN),
+    client_id=CONTRACT,
     tx_days_col="tx_days",
-    tx_amount_col="transaction_amt",
-    balance_col="rtk_balance",
-    retro_dt_col="rtk_send_date",
-    horizon_days=730,
-    step=7,
-    processed_dt="2026-09-01",
+    tx_amount_col=TX_AMOUNT,
+    balance_col=BALANCE,
+    retro_dt_col=START_DATE,
+    horizon_days=HORIZON_DAYS,
+    step=STEP,
+    processed_dt=PROCESSED_DT,
     population=None,
     y="cum_share_clients",  # конверсия в транзакцию, а не доля от баланса
     title=None,
@@ -241,105 +269,70 @@ _, fig = cl.eda.vintage(
 fig
 """)
 code("""
-data, fig = cl.eda.vintage_by_type(
-    df=phx,
-    tx_type_col="tr_direction",  # колонка-разрез: своя кривая на каждое значение
+data_types, fig = cl.eda.vintage_by_type(
+    df=main,
+    tx_type_col=TX_TYPE,  # колонка-разрез: своя кривая на каждое значение
     y="cum_share_of_balance",  # что откладываем по Y (см. vintage выше)
     types=None,  # None = все значения tx_type_col (либо top_k, либо не реже min_tx)
     top_k=None,  # None = без ограничения по числу типов
     min_tx=0,  # 0 = не отсеивать редкие типы по числу транзакций
     abs_amount=False,  # False = суммировать со знаком (не по модулю)
     title=None,  # None = заголовок «Винтаж по «<tx_type_col>»: <y>»
-    tx_amount_col="transaction_amt",  # сумма транзакции
+    tx_amount_col=TX_AMOUNT,  # сумма транзакции
     # дальше — те же параметры maturation_transactions, что и в vintage() выше
-    client_id="contract_number",
+    client_id=CONTRACT,
     tx_days_col="tx_days",
-    balance_col="rtk_balance",
-    retro_dt_col="rtk_send_date",
-    horizon_days=730,
-    step=7,
-    processed_dt="2026-09-01",
-    population=None,
-)
-fig
-""")
-code("""
-data_types, fig = cl.eda.vintage_by_type(
-    df=phx,
-    tx_type_col="transaction_type_cd",  # разрез по типу операции (PAY, DDJ, ...)
-    y="cum_share_of_balance",
-    types=None,
-    top_k=None,
-    min_tx=0,
-    abs_amount=False,
-    title=None,
-    tx_amount_col="transaction_amt",
-    client_id="contract_number",
-    tx_days_col="tx_days",
-    balance_col="rtk_balance",
-    retro_dt_col="rtk_send_date",
-    horizon_days=730,
-    step=7,
-    processed_dt="2026-09-01",
-    population=None,  # None = база — все договоры phx, одна и та же для каждого типа
+    balance_col=BALANCE,
+    retro_dt_col=START_DATE,
+    horizon_days=HORIZON_DAYS,
+    step=STEP,
+    processed_dt=PROCESSED_DT,
+    population=None,  # None = база — все договоры main, одна и та же для каждого типа
 )
 fig
 """)
 code("""
 # проверка: у всех типов одна база, и сумма долей по типам = общий винтаж (vintage выше)
-total, _ = cl.eda.vintage(
-    df=phx, sample="PHX", client_id="contract_number", tx_days_col="tx_days",
-    tx_amount_col="transaction_amt", balance_col="rtk_balance", retro_dt_col="rtk_send_date",
-    horizon_days=730, step=7, processed_dt="2026-09-01", population=None,
-    y="cum_share_of_balance", title=None, x_title=None, legend_title=None,
-)
 check = pd.DataFrame({
     "по типам (сумма)": data_types.groupby("day")["cum_share_of_balance"].sum(),
-    "общий винтаж": total.set_index("day")["cum_share_of_balance"],
+    "общий винтаж": data.set_index("day")["cum_share_of_balance"],
 })
-print("база по типам:", data_types["N_total"].unique(), "| общая:", total["N_total"].iloc[0])
+print("база по типам:", data_types["N_total"].unique(), "| общая:", data["N_total"].iloc[0])
 check.tail(3)
 """)
 
 md("""
-### Разные продукты на одном графике: `vintage_by_segment`
+### Разные сегменты на одном графике: `vintage_by_segment`
 
-Продукты — разные популяции, поэтому **у каждого своя база** (его договоры и баланс), в отличие
-от `vintage_by_type`, где типы транзакций делят одну общую базу. Кривая продукта совпадает с
-`vintage` по его строкам (для PHX — те же 3,80 %, что выше). Горизонт у каждого продукта свой.
+Сегменты (продукты, каналы) — разные популяции, поэтому **у каждого своя база** (его договоры и
+баланс), в отличие от `vintage_by_type`, где типы транзакций делят одну общую базу. Кривая
+сегмента совпадает с `vintage` по его строкам. Горизонт у каждого сегмента свой.
 
 | задача | функция | база |
 |---|---|---|
-| один продукт | `vintage` | его договоры |
-| разные продукты / выборки | `vintage_by_segment` | у каждого своя |
-| типы транзакций внутри продукта | `vintage_by_type` | общая; сумма по типам = общий винтаж |
+| одна выборка | `vintage` | её договоры |
+| разные сегменты / выборки | `vintage_by_segment` | у каждого своя |
+| типы транзакций внутри выборки | `vintage_by_type` | общая; сумма по типам = общий винтаж |
 """)
 code("""
-products = df[df["rtk_send_date"] <= "2024-06-01"]  # все продукты, не только PHX
-products = cl.eda.add_days_since(
-    df=products,
-    event_col="real_transaction_dttm",
-    base_col="rtk_send_date",
-    name="tx_days",
-)
 data_seg, fig = cl.eda.vintage_by_segment(
-    df=products,
-    segment_col="financial_account_subtype_cd",  # продукт; своя кривая и своя база у каждого
+    df=df,
+    segment_col=SEGMENT,  # своя кривая и своя база у каждого значения
     y="cum_share_of_balance",  # что откладываем по Y
-    segments=None,  # None = все продукты (по убыванию числа договоров); или явный список
-    top_k=4,  # показать 4 крупнейших продукта
-    min_contracts=50,  # не показывать продукты, где договоров меньше (шумные кривые)
+    segments=None,  # None = все сегменты (по убыванию числа договоров); или явный список
+    top_k=4,  # показать 4 крупнейших сегмента
+    min_contracts=50,  # не показывать сегменты, где договоров меньше (шумные кривые)
     title=None,  # None = «Винтаж по «<segment_col>»: <y>»
-    client_id="contract_number",  # идентификатор договора
-    population=None,  # None = база каждого продукта — его строки df
-    # дальше — параметры maturation_transactions, общие для всех продуктов
+    client_id=CONTRACT,  # идентификатор договора
+    population=None,  # None = база каждого сегмента — его строки df
+    # дальше — параметры maturation_transactions, общие для всех сегментов
     tx_days_col="tx_days",
-    tx_amount_col="transaction_amt",
-    balance_col="rtk_balance",
-    retro_dt_col="rtk_send_date",
-    horizon_days=730,
-    step=7,
-    processed_dt="2026-09-01",
+    tx_amount_col=TX_AMOUNT,
+    balance_col=BALANCE,
+    retro_dt_col=START_DATE,
+    horizon_days=HORIZON_DAYS,
+    step=STEP,
+    processed_dt=PROCESSED_DT,
 )
 fig
 """)
@@ -356,13 +349,13 @@ md("""
 """)
 code("""
 report = cl.eda.eda_transactions(
-    df=phx,
-    client_id="contract_number",  # колонка с идентификатором клиента/договора
-    tx_amount_col="transaction_amt",  # сумма транзакции
-    balance_col="rtk_balance",  # баланс клиента
-    retro_dt_col="rtk_send_date",  # ретро-дата (дата отправки в РТК)
-    tx_dt_col="real_transaction_dttm",  # дата самой транзакции -> добавляет разбивку по месяцам
-    tx_days_col="tx_days",  # дни от ретро-даты (уже посчитаны add_days_since)
+    df=main,
+    client_id=CONTRACT,  # колонка с идентификатором клиента/договора
+    tx_amount_col=TX_AMOUNT,  # сумма транзакции
+    balance_col=BALANCE,  # баланс договора
+    retro_dt_col=START_DATE,  # контрольная дата
+    tx_dt_col=TX_DATE,  # дата самой транзакции -> добавляет разбивку по месяцам
+    tx_days_col="tx_days",  # дни от контрольной даты (уже посчитаны add_days_since)
     quantiles=(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99),  # квантили в таблице распределений
     top_n=10,  # сколько клиентов показать в топе по |обороту|
     verbose=True,  # печатать таблицы сразу (иначе только report["figures"] и сами таблицы)
@@ -372,10 +365,8 @@ code("""
 list(report["figures"])
 """)
 code("""
-report["figures"]["balance"]
-""")
-code("""
-report["figures"]["tx_amount"]
+for fig in report["figures"].values():
+    fig.show()
 """)
 code("""
 report["top_clients"]

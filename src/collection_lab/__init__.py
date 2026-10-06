@@ -16,13 +16,13 @@
 
     import collection_lab as cl
 
-    split = cl.data.time_split(df, "target", "rtk_send_date", oot_from="2024-03-01")
+    split = cl.data.time_split(df, "target", "report_date", oot_from="2024-03-01")
     pipe = cl.selection.SelectionPipeline([...]).fit(split.train, "target", features)
     model = cl.modeling.train_model(split, pipe.selected_)
-    report = cl.validation.model_report(model, split, date_col="rtk_send_date")
+    report = cl.validation.model_report(model, split, date_col="report_date")
 """
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 from collection_lab import (  # noqa: E402
     core,

@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.2] — 2026-10-06
+
+### Добавлено
+- `data.make_demo_transactions()` и `data.DEMO_PROCESSED_DT` — синтетическая таблица транзакций
+  по договорам (три продукта, типы и каналы транзакций, возвраты) для винтажей и
+  `eda_transactions`.
+
+### Изменено
+- Все примеры обобщены: работают на демо-данных, всё, что зависит от таблицы, собрано в одной
+  ячейке «Настройки». `01_eda_overview` и `02_vintage_overview` — на `make_demo_transactions()`,
+  `03` — на `make_demo_data()`.
+- `examples/03_rtk_pipeline.ipynb` → `03_model_pipeline.ipynb`, `examples/rtk_pipeline.py` →
+  `model_pipeline.py` (параметры командной строки: путь, `--target`, `--date`, `--oot-from`,
+  `--drop`, `--trials`, `--project`; без пути — демо-данные).
+- README и докстринги: примеры кода без привязки к конкретной задаче.
+
 ## [0.2.1] — 2026-10-06
 
 ### Добавлено
