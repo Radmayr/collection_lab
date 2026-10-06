@@ -100,7 +100,7 @@ def test_make_demo_transactions():
     assert df["contract_id"].nunique() == 800 and df["product"].nunique() == 3
     assert df["tx_amount"].isna().any() and (df["tx_amount"] < 0).any()
     assert df["tx_date"].max() <= pd.Timestamp(DEMO_PROCESSED_DT)
-    assert (df.groupby("contract_id")["balance"].nunique() == 1).all()
+    assert len(df[["contract_id", "balance"]].drop_duplicates()) == 800  # баланс один на договор
     df = add_days_since(df, "tx_date", "start_date", "tx_days")
     table, _ = vintage_by_segment(
         df, "product", client_id="contract_id", tx_amount_col="tx_amount", balance_col="balance",
