@@ -78,3 +78,15 @@ def test_datasplit_helpers(binary_df):
     X, y = split.xy("val", ["x1", "x2"])
     assert list(X.columns) == ["x1", "x2"] and len(X) == len(y)
     assert set(split.labeled()["sample"]) == {"train", "val", "test"}
+
+
+def test_make_demo_data():
+    from collection_lab.data import DEMO_DOMAINS, make_demo_data
+
+    df = make_demo_data(n=2000)
+    features = [c for cols in DEMO_DOMAINS.values() for c in cols]
+    assert len(df) == 2000 and set(features) <= set(df.columns)
+    assert set(df["target"].unique()) == {0, 1} and df["segment"].nunique() == 2
+    assert df.loc[df["report_date"] < "2023-07-01", DEMO_DOMAINS["транзакции"]].isna().all().all()
+    assert df["bureau_dpd_max_12m"].corr(df["dpd_max_12m"]) > 0.6
+    pd.testing.assert_frame_equal(df, make_demo_data(n=2000))

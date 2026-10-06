@@ -79,11 +79,14 @@ with cl.tracking.Experiment("RTK_model", clearml=True) as exp:
 | № | Ноутбук | На какой вопрос отвечает |
 |---|---|---|
 | 1 | [01_eda_overview](examples/01_eda_overview.ipynb) | Что лежит в таблице и как пользоваться каждой функцией `eda` |
-| 2 | [02_vintage_overview](examples/02_vintage_overview.ipynb) | Сколько и когда возвращается после отправки в РТК — по продуктам, типам транзакций, когортам |
+| 2 | [02_vintage_overview](examples/02_vintage_overview.ipynb) | Сколько и когда поступает после контрольной даты — по продуктам, типам транзакций, когортам |
 | 3 | [03_rtk_pipeline](examples/03_rtk_pipeline.ipynb) | Как построить модель от данных до отчёта и сохранённого эксперимента |
 | 4 | [04_feature_testing](examples/04_feature_testing.ipynb) | Что даст модели добавление новых признаков и доменов данных |
+| 5 | [05_catboost_pipeline](examples/05_catboost_pipeline.ipynb) | Как построить модель, если финальная модель — CatBoost |
 
-Что считает каждый и как запустить — в [examples/README.md](examples/README.md).
+Ноутбуки 4 и 5 работают на встроенных демо-данных (`cl.data.make_demo_data()`) и переносятся на
+свою таблицу правкой одной ячейки «Настройки». Что считает каждый и как запустить — в
+[examples/README.md](examples/README.md).
 
 Пример отдельного проекта на библиотеке — отчёт по включению в РТК — ведётся в своём репозитории
 [rtk_recovery](https://github.com/Radmayr/rtk_recovery-): библиотека содержит только функции, расчёты под конкретную задачу — в проектах.
@@ -93,7 +96,7 @@ with cl.tracking.Experiment("RTK_model", clearml=True) as exp:
 ```
 collection_lab/
 ├── src/collection_lab/   библиотека (модули — в таблице «Как устроено» ниже)
-├── examples/             ноутбуки-примеры 01–04, их описание и скрипты-сборщики (builders/)
+├── examples/             ноутбуки-примеры 01–05, их описание и скрипты-сборщики (builders/)
 ├── tests/                тесты: pytest; медленные помечены slow
 ├── README.md             этот файл
 ├── CHANGELOG.md          что менялось по версиям
@@ -162,7 +165,7 @@ scores = inference.predict(df)          # df — таблица с колонк�
 ```python
 # несколько признаков: каждый отдельно и все вместе (строка ALL)
 test = cl.feature_testing.test_features(split, base, candidates, segment="product",
-                                        date_col="rtk_send_date")
+                                        date_col="report_date")
 test.summary; test.plot(); test.plot_segments(); test.plot_metrics()
 test.replacement().table        # добавить или заменить похожий признак базы
 
@@ -210,7 +213,7 @@ domains.summary; domains.features; domains.plot_domain("транзакции")
 
 | Модуль | Что внутри |
 |---|---|
-| `data` | `split_feature_types`, `cast_types`, `time_split`, `random_split`, `DataSplit` |
+| `data` | `split_feature_types`, `cast_types`, `time_split`, `random_split`, `DataSplit`, `make_demo_data` |
 | `core` | `make_model`, `LGBMModel`, `CatBoostModel`, `FeaturePreparer`, `cross_validate`, `make_folds`, `Result` |
 | `feature_testing` | `test_features`, `test_domains`, `FeatureTest` |
 | `eda` | `overview`, `target_summary`, `plot_distribution`, `plot_target_rate_by_bins`, `target_dynamics`, `vintage`, `vintage_by_type`, `vintage_by_segment`, `maturation_transactions`, `plot_vintage`, `eda_transactions`, `add_days_since` |
@@ -251,6 +254,7 @@ domains.summary; domains.features; domains.plot_domain("транзакции")
 | `to_numeric_frame(X, cat_cols)` | Некатегориальные колонки → float (даты → наносекунды, `bool` → 0/1) | `DataFrame` |
 | `time_split(df, target, date_col, oot_from, oot_to, val_size, val_mode)` | Out-of-time сплит: test — строки с датой `>= oot_from`, остальное делится на train / val (`val_mode="random"` или `"time"` — последние по дате) | `DataSplit` |
 | `random_split(df, target, val_size, test_size, stratify)` | Случайный стратифицированный сплит | `DataSplit` |
+| `make_demo_data(n, random_state)` | Синтетическая таблица для примеров: таргет, дата, сегмент и признаки четырёх доменов (`DEMO_DOMAINS`) | `DataFrame` |
 
 `DataSplit` — части `train`, `val`, `test` и имя таргета; при создании проверяется, что части не пересекаются.
 

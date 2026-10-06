@@ -1,5 +1,6 @@
 """Подготовка данных: типы признаков, приведение dtype, сплиты train/val/test без утечек."""
 
+from collection_lab.data.demo import DEMO_DOMAINS, make_demo_data
 from collection_lab.data.split import DataSplit, random_split, time_split
 from collection_lab.data.types import (
     cast_types,
@@ -12,11 +13,13 @@ from collection_lab.data.types import (
 )
 
 __all__ = [
+    "DEMO_DOMAINS",
     "DataSplit",
     "cast_types",
     "category_strings",
     "detect_categorical",
     "is_categorical",
+    "make_demo_data",
     "normalize_missing",
     "random_split",
     "split_feature_types",

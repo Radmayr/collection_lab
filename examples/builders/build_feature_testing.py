@@ -28,6 +28,9 @@ md("""
 Вопрос один: **что даст модели добавление этих признаков?** Ответ — прирост метрик с
 доверительным интервалом, в целом и по сегментам.
 
+Ноутбук работает на встроенных демо-данных. **Чтобы запустить на своих — поменяйте только
+ячейку «Настройки»**: всё, что ниже, от конкретных колонок не зависит.
+
 | Что нужно | Как вызвать | Раздел |
 |---|---|---|
 | Несколько признаков: по одному и все вместе | `test_features(split, base, candidates)` | 2 |
@@ -52,50 +55,63 @@ import collection_lab as cl
 
 pio.renderers.default = "notebook_connected+plotly_mimetype"
 pd.set_option("display.max_columns", 40)
-
-DATA = "D:/ML_lib/df_agg.csv"   # на ML Core — выгрузка из DAL
-TARGET, DATE = "target", "rtk_send_date"
-SEGMENT = "age_group"
 """)
 
 md("""
-## 1. Данные, сплит и «разработанная модель»
+## Настройки
 
-Признаки разложены по доменам — по источнику данных. Считаем, что модель уже разработана на
-доменах **просрочка** и **анкета**, а **другие счета** и **имущество** — новые данные, которые
-нужно оценить.
+Единственная ячейка, которую нужно менять под свои данные. Требования к таблице: одна строка —
+одно наблюдение; в ней лежат таргет, дата, все признаки (и текущей модели, и новые) и, если
+нужно, колонка сегмента.
 """)
 code("""
-df = pd.read_csv(DATA, low_memory=False)
-df[DATE] = pd.to_datetime(df[DATE], format="ISO8601").dt.normalize()
+# --- данные ---------------------------------------------------------------------------
+df = cl.data.make_demo_data()        # свои данные: df = pd.read_csv("путь/к/таблице.csv")
 
-DOMAINS = {
-    "просрочка": [c for c in df.columns if c.startswith("dpd")] + ["last_col_end_days"],
-    "анкета": ["age", "education_level_cd", "marital_status_cd", "children_cnt",
-               "self_employed_job_org_flg", "job_position_cd", "pensioner_flg", "risk_level_cd"],
-    "другие счета": [c for c in df.columns if "oth_" in c or c.endswith("_util_days")],
-    "имущество": [c for c in df.columns if c.startswith(("car_", "realty_", "suspected_car"))]
-                 + ["pledge_count", "apartment_cnt", "living_house_cnt", "land_cnt",
-                    "other_realty_cnt"],
+TARGET = "target"                    # бинарный таргет: 0 / 1
+DATE = "report_date"                 # дата наблюдения: разбиение по времени, PSI по месяцам
+OOT_FROM = "2024-03-01"              # с этой даты — отложенная выборка test
+SEGMENT = "segment"                  # колонка сегмента; None — без сегментов
+
+# --- признаки -------------------------------------------------------------------------
+DOMAINS = {                          # признаки по источникам данных: {"домен": [колонки]}
+    "анкета": ["age", "income", "education", "region", "children_cnt"],
+    "поведение": ["dpd_max_12m", "dpd_cnt_12m", "utilization", "months_on_book"],
+    "бюро": ["bureau_score", "bureau_inquiries_6m", "bureau_active_loans",
+             "bureau_dpd_max_12m", "bureau_legal_flg"],
+    "транзакции": ["tx_cnt_3m", "tx_sum_3m", "tx_salary_flg", "tx_cash_share"],
 }
-features = [c for cols in DOMAINS.values() for c in cols]
-num_cols, cat_cols = cl.data.split_feature_types(df, features)
+BASE_DOMAINS = ["анкета", "поведение"]     # на них построена текущая модель
+NEW_DOMAINS = ["бюро", "транзакции"]       # новые данные, которые нужно оценить
+
+# несколько новых признаков для точечной проверки (разделы 2–5, 7, 9)
+CANDIDATES = ["bureau_score", "bureau_dpd_max_12m", "bureau_legal_flg", "tx_cnt_3m",
+              "tx_cash_share"]
+
+# --- расчёт ---------------------------------------------------------------------------
+PARAMS = {"n_estimators": 400, "learning_rate": 0.05, "max_depth": 4, "num_leaves": 16}
+MAX_EXACT = 4                        # сколько кандидатов оценивать точно (раздел 6); в работе — 20
+""")
+
+md("""
+## 1. Сплит и «разработанная модель»
+
+Из настроек собираются списки признаков, сплит и базовая модель — она играет роль уже
+разработанной модели, к которой примеряются новые признаки.
+""")
+code("""
+base_features = [c for name in BASE_DOMAINS for c in DOMAINS[name]]
+new_features = [c for name in NEW_DOMAINS for c in DOMAINS[name]]
+
+df[DATE] = pd.to_datetime(df[DATE], format="mixed").dt.normalize()   # дата без времени
+num_cols, cat_cols = cl.data.split_feature_types(df, base_features + new_features)
 df = cl.data.cast_types(df, num_cols, cat_cols, target_col=TARGET)
 
-# сегмент — отдельная колонка таблицы; здесь это возрастная группа
-df[SEGMENT] = pd.cut(df["age"], [0, 35, 50, 200], labels=["до 35", "36–50", "старше 50"]
-                     ).astype(object).fillna("возраст не указан")
-{name: len(cols) for name, cols in DOMAINS.items()}
-""")
-code("""
-split = cl.data.time_split(df, TARGET, DATE, oot_from="2024-03-01", val_size=0.2)
+split = cl.data.time_split(df, TARGET, DATE, oot_from=OOT_FROM, val_size=0.2)
+print("признаков в базе:", len(base_features), "| новых:", len(new_features))
 split.summary(DATE)
 """)
 code("""
-# параметры поменьше, чтобы пример считался быстро; в работе — параметры вашей модели
-PARAMS = {"n_estimators": 400, "learning_rate": 0.05, "max_depth": 4, "num_leaves": 16}
-
-base_features = DOMAINS["просрочка"] + DOMAINS["анкета"]
 base_model = cl.modeling.train_model(split, base_features, params=PARAMS)
 {k: round(v, 4) for k, v in base_model.scores_.items()}
 """)
@@ -108,16 +124,11 @@ md("""
 параметрами на одних и тех же фолдах.
 """)
 code("""
-candidates = ["car_count", "car_price_sum", "oth_acc_cnt", "max_util_days", "bad_oth_bal_sum"]
-
-test = cl.feature_testing.test_features(split, base_features, candidates, segment=SEGMENT,
+test = cl.feature_testing.test_features(split, base_features, CANDIDATES, segment=SEGMENT,
                                         date_col=DATE, params=PARAMS)
 test.summary.round(4)
 """)
 md("""
-`bad_oth_bal_sum` взят намеренно: он заполнен меньше чем у 1% договоров — это видно по
-`coverage`, а прирост только по заполненным строкам показывает `delta_test_covered`.
-
 Как читать сводку. Все дельты — «насколько стало лучше»: `> 0` — кандидат улучшил метрику.
 
 | Колонка | Что это |
@@ -134,6 +145,10 @@ md("""
 | `verdict` | `better` / `same` / `worse` — по интервалу CV; подсказка, решение за вами |
 
 `better` — интервал по CV целиком выше нуля, `same` — захватывает ноль, `worse` — целиком ниже.
+
+На что смотреть в демо-данных: признак, заполненный у 1% строк (`coverage`), признаки,
+появившиеся только с середины периода (`filled_from`, высокий `psi_max`), и кандидат, похожий
+на признак базы (`max_corr_base`).
 """)
 code("""
 # точка — прирост по CV на train (цвет — вердикт), ромб — прирост на test
@@ -151,18 +166,19 @@ test.metrics.query("name == 'ALL'").round(4)
 md("""
 ## 3. Сегменты
 
-`segment="колонка"` в вызове выше — метка сегмента для каждой строки. Прирост считается ещё и
-внутри каждого сегмента: общий плюс может складываться из выигрыша в одном сегменте и проигрыша
-в другом. Сегменты меньше 30 строк не показываются.
+`segment=SEGMENT` в вызове выше — колонка с меткой сегмента. Прирост считается ещё и внутри
+каждого сегмента: общий плюс может складываться из выигрыша в одном сегменте и проигрыша в
+другом. Сегменты меньше 30 строк не показываются.
 """)
 code("""
-test.summary[["name", "delta_cv", "delta_test", "worst_segment", "worst_segment_delta",
-              "verdict"]].round(4)
+if SEGMENT:
+    test.plot_segments().show()                       # основная метрика на test
+    test.plot_segments(metric="ks", part="cv").show()   # другая метрика, по CV на train
 """)
-code("test.plot_segments()                      # основная метрика на test")
-code("test.plot_segments(metric='ks', part='cv')  # другая метрика, по CV на train")
 code("""
-test.segments.query("name == 'ALL' and metric == 'auc'").round(4)
+# числами: прирост основной метрики от всех кандидатов вместе в каждом сегменте
+if SEGMENT:
+    display(test.segments.query("name == 'ALL' and metric == @test.info['metric']").round(4))
 """)
 
 md("""
@@ -172,15 +188,15 @@ md("""
 Подходит всё, что есть на руках:
 
 ```python
-test_features(split, model, candidates)                           # обученная модель библиотеки
-test_features(split, "experiments/RTK_model/v_3/models/model.pkl", candidates)   # из эксперимента
-test_features(split, "export/rtk_v3", candidates)                 # папка model.export(...)
-test_features(split, lgbm_or_catboost_model, candidates)          # нативный LightGBM / CatBoost
-test_features(split, "model.txt", candidates)                     # файл LightGBM (.cbm — CatBoost)
+test_features(split, model, candidates)                      # обученная модель библиотеки
+test_features(split, "experiments/my_model/v_3/models/model.pkl", candidates)   # из эксперимента
+test_features(split, "export/my_model", candidates)          # папка model.export(...)
+test_features(split, lgbm_or_catboost_model, candidates)     # нативный LightGBM / CatBoost
+test_features(split, "model.txt", candidates)                # файл LightGBM (.cbm — CatBoost)
 ```
 """)
 code("""
-by_model = cl.feature_testing.test_features(split, base_model, candidates[:2], segment=SEGMENT)
+by_model = cl.feature_testing.test_features(split, base_model, CANDIDATES[:2], segment=SEGMENT)
 print(by_model.info["base"], "|", by_model.info["how"])
 by_model.summary[["name", "delta_cv", "cv_ci_low", "cv_ci_high", "delta_test", "verdict"]].round(4)
 """)
@@ -195,12 +211,14 @@ md("""
 
 > Если скор на train посчитан моделью, обученной на этих же строках, прирост по CV занижен
 > (модель «помнит» train). В этом режиме ориентир — `delta_test`.
+
+Здесь колонка `score` считается базовой моделью; в работе это готовый скор из вашей таблицы.
 """)
 code("""
 scored = df.assign(score=base_model.predict(df))
-scored_split = cl.data.time_split(scored, TARGET, DATE, oot_from="2024-03-01", val_size=0.2)
+scored_split = cl.data.time_split(scored, TARGET, DATE, oot_from=OOT_FROM, val_size=0.2)
 
-on_top = cl.feature_testing.test_features(scored_split, "score", candidates, segment=SEGMENT,
+on_top = cl.feature_testing.test_features(scored_split, "score", CANDIDATES, segment=SEGMENT,
                                           params=PARAMS)
 print(on_top.info["base"], "|", on_top.info["how"])
 on_top.summary[["name", "max_corr_base", "delta_cv", "delta_test", "test_ci_low",
@@ -221,8 +239,8 @@ md("""
 `screened out`.
 """)
 code("""
-many = cl.feature_testing.test_features(split, base_features, DOMAINS["другие счета"],
-                                        max_exact=5, date_col=DATE, params=PARAMS)
+many = cl.feature_testing.test_features(split, base_features, new_features,
+                                        max_exact=MAX_EXACT, date_col=DATE, params=PARAMS)
 print(many)
 many.summary[["name", "screen_delta", "uni_auc", "delta_cv", "cv_ci_low", "cv_ci_high",
               "delta_test", "verdict"]].round(4)
@@ -232,28 +250,22 @@ code("many.plot()")
 md("""
 ## 7. Добавить или заменить
 
-Кандидат, похожий на признак базы, сверху почти ничего не добавляет — информация уже в модели.
-Но он может быть лучше старого. `test.replacement()` для каждого кандидата с корреляцией с
-признаком базы не ниже `threshold` обучает модель «база без похожего признака + кандидат».
+Кандидат, похожий на признак базы, сверху добавляет меньше, чем мог бы: часть информации уже в
+модели. Но он может быть лучше старого. `test.replacement()` для каждого кандидата с
+корреляцией с признаком базы не ниже `threshold` обучает модель «база без похожего признака +
+кандидат» и сравнивает её с базой.
 
-Пример: в базе уже есть число автомобилей с известной ценой, кандидаты — общее число
-автомобилей и их суммарная цена.
+Если таблица пустая — среди кандидатов нет похожих на признаки базы (см. `max_corr_base` в
+сводке), можно понизить `threshold`.
 """)
 code("""
-base_with_cars = base_features + ["car_count_with_price"]
-
-t_cars = cl.feature_testing.test_features(split, base_with_cars, ["car_count", "car_price_sum"],
-                                          params=PARAMS)
-t_cars.summary[["name", "max_corr_base", "corr_with", "delta_cv", "cv_ci_low", "cv_ci_high",
-                "verdict"]].round(4)
-""")
-code("""
-replacement = t_cars.replacement(threshold=0.6)
+replacement = test.replacement(threshold=0.6)
 replacement.table.round(4)
 """)
 code("""
 # синий — добавить кандидата к базе, красный — поставить его вместо похожего признака
-replacement.plot()
+if len(replacement.table):
+    replacement.plot().show()
 """)
 
 md("""
@@ -274,33 +286,36 @@ md("""
 """)
 code("""
 domains = cl.feature_testing.test_domains(
-    split, DOMAINS["анкета"],                       # база — только анкета
-    {name: DOMAINS[name] for name in ("просрочка", "другие счета", "имущество")},
+    split, base_features, {name: DOMAINS[name] for name in NEW_DOMAINS},
     segment=SEGMENT, date_col=DATE, params=PARAMS)
-domains.summary[["name", "n_features", "coverage", "delta_cv", "cv_ci_low", "cv_ci_high",
-                 "delta_test", "delta_test_covered", "alone_auc_test", "base_auc_test",
-                 "gain_share", "verdict"]].round(4)
+domains.summary.drop(columns=["kind", "uni_auc", "folds_better", "delta_val"]).round(4)
 """)
 code("domains.plot()")
-code("domains.plot_segments()")
+code("""
+if SEGMENT:
+    domains.plot_segments().show()
+""")
 code("domains.plot_metrics()")
 md("""
 Что внутри домена: `features` — вклад каждого признака домена в модель «база + домен».
-Если почти весь вклад дают два-три признака, остальные можно не тащить.
+Если почти весь вклад дают два-три признака, остальные можно не подключать.
 """)
 code("""
-domains.features.query("domain == 'другие счета'").head(10).round(4)
+domains.features.round(4)
 """)
-code("domains.plot_domain('другие счета')")
+code("""
+for name in NEW_DOMAINS:
+    domains.plot_domain(name).show()
+""")
 md("""
 `base` у доменов задаётся так же, как у признаков: список, модель или колонка скора.
 """)
 code("""
 domains_on_top = cl.feature_testing.test_domains(
-    scored_split, "score", {name: DOMAINS[name] for name in ("другие счета", "имущество")},
+    scored_split, "score", {name: DOMAINS[name] for name in NEW_DOMAINS},
     segment=SEGMENT, params=PARAMS)
-domains_on_top.summary[["name", "delta_cv", "delta_test", "test_ci_low", "test_ci_high",
-                        "worst_segment", "worst_segment_delta", "verdict"]].round(4)
+domains_on_top.summary[["name", "coverage", "delta_cv", "delta_test", "test_ci_low",
+                        "test_ci_high", "verdict"]].round(4)
 """)
 
 md("""
@@ -316,7 +331,7 @@ md("""
 """)
 code("""
 precise = cl.feature_testing.test_features(
-    split, base_features, ["oth_acc_cnt", "car_count"],
+    split, base_features, CANDIDATES[:2],
     metrics=("gini", "ks", "lift@5%"), n_repeats=2, n_boot=500, params=PARAMS)
 precise.summary[["name", "base_gini_cv", "delta_cv", "cv_ci_low", "cv_ci_high", "folds_better",
                  "delta_test", "test_ci_low", "test_ci_high", "verdict"]].round(4)
@@ -329,7 +344,7 @@ md("""
 в `logs/` версии и, при `clearml=True`, в ClearML.
 """)
 code("""
-with cl.tracking.Experiment("RTK_feature_testing", root="experiments") as exp:   # clearml=True
+with cl.tracking.Experiment("feature_testing_demo", root="experiments") as exp:   # clearml=True
     exp.log(test, "new_features")
     exp.log(domains, "new_domains")
     exp.log(replacement)

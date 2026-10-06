@@ -19,6 +19,7 @@ dist/
 *.pkl
 *.joblib
 experiments/
+examples/export/
 catboost_info/
 
 # IDE
