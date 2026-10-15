@@ -383,7 +383,7 @@ WoE / IV:
 | Функция | Что делает |
 |---|---|
 | `quality_filter(df, features, num_missing_threshold, num_zero_threshold, cat_unique_max, ...)` | Убирает признаки с долей пропусков / нулей выше порога, константы, категориальные со слишком малым или большим числом значений |
-| `correlation_filter(df, y, features, threshold, strategy, ...)` | В каждой группе коррелирующих числовых признаков оставляет один с лучшим AUC. `strategy`: `"direct"` — AUC признака как скора, `"model"` — CV AUC однофакторной модели, `"hybrid"` — модель только там, где лидеры близки |
+| `correlation_filter(df, y, features, threshold, strategy, grouping, ...)` | Удаляет сильно коррелирующие числовые признаки, оставляя более сильные по AUC. `grouping`: `"components"` — признаки, связанные цепочками корреляций, собираются в группу и в ней остаётся один; `"pairwise"` — от сильного к слабому, признак остаётся, если не коррелирует ни с одним уже оставленным (цепочка A ~ B ~ C оставит A и C). `strategy` — как сравнивать силу: `"direct"` — AUC признака как скора, `"model"` — CV AUC однофакторной модели, `"hybrid"` — модель только там, где признаки близки |
 | `correlation_groups(X, threshold, method)` | Группы признаков, связанных цепочками `\|corr\| > threshold`; возвращает `(groups, corr)` |
 | `univariate_scores(X, y, features, n_splits, ...)` | AUC маленькой модели LightGBM на каждом признаке отдельно |
 | `univariate_tree_scores(X, y, features, max_depth, min_leaf_share, n_splits)` | Одно дерево решений на каждом признаке: ранжирование по AUC на кросс-валидации, число листьев, монотонность доли таргета; в `info["leaves"]` — интервалы каждого признака и доля таргета в них. `plot()` — AUC по признакам, `plot(feature=...)` — доля таргета по интервалам |

@@ -255,3 +255,45 @@ def test_univariate_tree_scores(binary_df):
         res.plot(feature="const")
     with pytest.raises(ValueError):
         univariate_tree_scores(df, df["target"], ["x1"], min_leaf_share=0.7)
+
+
+def _chain_df(weights=(2.0, 0.8)):
+    """A ~ B ~ C: B связан с A и с C, A и C между собой независимы."""
+    rng = np.random.default_rng(0)
+    n = 6000
+    a, c = rng.normal(size=n), rng.normal(size=n)
+    df = pd.DataFrame({"A": a, "B": (a + c) / np.sqrt(2) + rng.normal(scale=0.2, size=n), "C": c})
+    logit = weights[0] * a + weights[1] * c - 1
+    df["target"] = rng.binomial(1, 1 / (1 + np.exp(-logit)))
+    return df
+
+
+@pytest.mark.parametrize("strategy", ["direct", "model", "hybrid"])
+def test_correlation_filter_pairwise_breaks_chains(strategy):
+    df = _chain_df()
+    kwargs = {"threshold": 0.6, "strategy": strategy, "verbose": False, "n_splits": 3}
+    groups = correlation_filter(df, df["target"], ["A", "B", "C"], **kwargs)
+    pairs = correlation_filter(df, df["target"], ["A", "B", "C"], grouping="pairwise", **kwargs)
+    assert groups.selected == ["A"]                   # одна группа — остаётся один признак
+    assert pairs.selected == ["A", "C"]               # A и C не связаны — остаются оба
+    t = pairs.table.set_index("feature")
+    assert t.loc["B", "action"] == "drop" and t.loc["B", "kept"] == "A"
+    assert t.loc["C", "action"] == "keep" and t.loc["C", "kept"] == "C"
+    assert pairs.info["grouping"] == "pairwise"
+    with pytest.raises(ValueError):
+        correlation_filter(df, df["target"], ["A", "B"], grouping="graph")
+
+
+def test_pairwise_hybrid_lets_model_overturn_close_pair():
+    from collection_lab.selection.correlation import _pairwise_rows
+
+    corr = pd.DataFrame([[1.0, 0.9], [0.9, 1.0]], index=["p", "q"], columns=["p", "q"])
+    direct = {"p": 0.700, "q": 0.695}                 # по direct p чуть сильнее
+    model = {"p": 0.71, "q": 0.73}.__getitem__        # а по модели — q
+    rows = {r["feature"]: r for r in _pairwise_rows([["p", "q"]], corr, 0.8, "hybrid", direct,
+                                                    model, auc_gap_threshold=0.01)}
+    assert rows["q"]["action"] == "keep" and rows["p"]["action"] == "drop"
+    assert rows["p"]["kept"] == "q" and "method=model" in rows["p"]["reason"]
+    rows = {r["feature"]: r for r in _pairwise_rows([["p", "q"]], corr, 0.8, "direct", direct,
+                                                    model, auc_gap_threshold=0.01)}
+    assert rows["p"]["action"] == "keep" and rows["q"]["action"] == "drop"

@@ -17,6 +17,7 @@ from collection_lab.plotting.theme import style
 from collection_lab.selection.univariate import direct_auc
 
 STRATEGIES = ("direct", "model", "hybrid")
+GROUPINGS = ("components", "pairwise")
 
 
 def correlation_groups(
@@ -65,6 +66,7 @@ def correlation_filter(
     threshold: float = 0.8,
     method: str = "pearson",
     strategy: str = "hybrid",
+    grouping: str = "components",
     n_splits: int = 5,
     auc_gap_threshold: float = 0.01,
     top_k: int = 3,
@@ -74,20 +76,34 @@ def correlation_filter(
     random_state: int = RANDOM_STATE,
     verbose: bool = True,
 ) -> Result:
-    """В каждой группе коррелирующих числовых признаков оставляет один — с лучшим AUC.
+    """Удаляет сильно коррелирующие числовые признаки, оставляя более сильные по AUC.
 
     Объединяет прежние ``select_features_by_auc_cv_hybrid`` (``strategy="hybrid"``) и
     ``select_features_by_auc_cv`` (``strategy="model"``, ``model="catboost"``).
+
+    Два способа решать, кого удалять (``grouping``):
+
+    - ``"components"`` — признаки, связанные цепочками ``|corr| > threshold``, собираются в
+      группы (компоненты связности), и в каждой группе остаётся **один** лучший. Цепочка
+      A ~ B ~ C даёт одну группу, даже если A и C между собой не связаны — останется один из трёх;
+    - ``"pairwise"`` — признаки идут от сильного к слабому, и признак остаётся, если он не
+      коррелирует сильнее порога ни с одним **уже оставленным**. Из каждой сильно
+      коррелирующей пары выпадает более слабый; в цепочке A ~ B ~ C остаются A и C.
 
     Parameters
     ----------
     features : list[str], optional
         Проверяемые признаки; учитываются только числовые, остальные проходят без изменений.
     strategy : {"direct", "model", "hybrid"}
+        Как сравнивать признаки по силе.
         ``"direct"`` — AUC признака как скора (быстро);
         ``"model"`` — CV AUC однофакторной модели для всех признаков групп;
         ``"hybrid"`` — ``"direct"``, а если разрыв между 1-м и 2-м в группе меньше
-        ``auc_gap_threshold`` — модельный AUC для ``top_k`` лучших.
+        ``auc_gap_threshold`` — модельный AUC для ``top_k`` лучших. При
+        ``grouping="pairwise"`` — модельный AUC решает пару, если разрыв по ``"direct"``
+        меньше ``auc_gap_threshold`` (``top_k`` не используется).
+    grouping : {"components", "pairwise"}
+        Группы целиком или попарное сравнение (см. выше).
     model, params
         Модель для ``"model"``/``"hybrid"`` (по умолчанию маленький LightGBM).
 
@@ -95,10 +111,14 @@ def correlation_filter(
     -------
     Result
         ``table``: ``feature, action, reason, group, kept, corr_with_kept, direct_auc,
-        model_auc``; ``selected`` — все ``features`` без удалённых.
+        model_auc`` — по строке на каждый признак, у которого есть сильная корреляция;
+        ``kept`` — признак, из-за которого удалён (для оставленных — он сам);
+        ``selected`` — все ``features`` без удалённых.
     """
     if strategy not in STRATEGIES:
         raise ValueError(f"strategy должен быть одним из {STRATEGIES}")
+    if grouping not in GROUPINGS:
+        raise ValueError(f"grouping должен быть одним из {GROUPINGS}")
     features = list(df.columns if features is None else features)
     numeric = [c for c in features if pd.api.types.is_numeric_dtype(df[c])]
     X = df[numeric].reset_index(drop=True)
@@ -108,7 +128,7 @@ def correlation_filter(
 
     groups, corr = correlation_groups(X, threshold, method)
     info: dict[str, Any] = {"threshold": threshold, "method": method, "strategy": strategy,
-                            "n_groups": len(groups)}
+                            "grouping": grouping, "n_groups": len(groups)}
     columns = ["feature", "action", "reason", "group", "kept", "corr_with_kept",
                "direct_auc", "model_auc"]
     if not groups:
@@ -131,6 +151,29 @@ def correlation_filter(
             model_cache[f] = res.mean
         return model_cache[f]
 
+    if grouping == "pairwise":
+        rows = _pairwise_rows(groups, corr, threshold, strategy, direct, model_auc,
+                              auc_gap_threshold)
+    else:
+        rows = _component_rows(groups, corr, strategy, direct, model_auc, model_cache,
+                               auc_gap_threshold, top_k)
+    for row in rows:
+        row["model_auc"] = model_cache.get(row["feature"], np.nan)
+
+    table = pd.DataFrame(rows, columns=columns)
+    dropped = set(table.loc[table["action"] == "drop", "feature"])
+    selected = [f for f in features if f not in dropped]
+    info.update(n_in_groups=len(in_groups), n_dropped=len(dropped),
+                n_model_evaluated=len(model_cache))
+    if verbose:
+        print(f"Групп: {len(groups)}; признаков в группах: {len(in_groups)}; "
+              f"удалено: {len(dropped)}; модель обучалась для {len(model_cache)} признаков.")
+    return Result("correlation_filter", table, selected, info, plotter=_plot_groups)
+
+
+def _component_rows(groups, corr, strategy, direct, model_auc, model_cache, auc_gap_threshold,
+                    top_k) -> list[dict[str, Any]]:
+    """В каждой группе остаётся один признак."""
     rows = []
     for gid, group in enumerate(groups, start=1):
         ranked = sorted(group, key=lambda f: direct[f], reverse=True)
@@ -151,18 +194,59 @@ def correlation_filter(
                     f"Удалён из группы с {chosen} (method={how}, |corr|={c:.3f}, "
                     f"auc={direct[f]:.4f} vs {direct[chosen]:.4f})"),
                 "group": gid, "kept": chosen, "corr_with_kept": c,
-                "direct_auc": direct[f], "model_auc": model_cache.get(f, np.nan),
+                "direct_auc": direct[f],
             })
+    return rows
 
-    table = pd.DataFrame(rows, columns=columns)
-    dropped = set(table.loc[table["action"] == "drop", "feature"])
-    selected = [f for f in features if f not in dropped]
-    info.update(n_in_groups=len(in_groups), n_dropped=len(dropped),
-                n_model_evaluated=len(model_cache))
-    if verbose:
-        print(f"Групп: {len(groups)}; признаков в группах: {len(in_groups)}; "
-              f"удалено: {len(dropped)}; модель обучалась для {len(model_cache)} признаков.")
-    return Result("correlation_filter", table, selected, info, plotter=_plot_groups)
+
+def _pairwise_rows(groups, corr, threshold, strategy, direct, model_auc,
+                   auc_gap_threshold) -> list[dict[str, Any]]:
+    """Попарно: признак остаётся, если не коррелирует сильнее порога ни с одним оставленным.
+
+    Признаки идут по убыванию силы (``"model"`` — модельный AUC, иначе ``"direct"``). При
+    ``"hybrid"`` близкую по ``"direct"`` пару решает модельный AUC: если более поздний признак
+    по модели сильнее всех оставленных, с которыми конфликтует, он занимает их место.
+    """
+    group_of = {f: gid for gid, group in enumerate(groups, start=1) for f in group}
+    score = model_auc if strategy == "model" else direct.__getitem__
+    order = sorted(group_of, key=lambda f: (-score(f), f))
+    kept: list[str] = []
+    decision: dict[str, tuple[str, str, str]] = {}  # признак -> (оставлен ли, из-за кого, как)
+
+    for f in order:
+        conflicts = [k for k in kept if corr.loc[f, k] > threshold]
+        if not conflicts:
+            kept.append(f)
+            decision[f] = ("keep", f, "")
+            continue
+        if (strategy == "hybrid"
+                and all(direct[k] - direct[f] < auc_gap_threshold for k in conflicts)
+                and all(model_auc(f) > model_auc(k) for k in conflicts)):
+            for k in conflicts:  # f сильнее по модели — занимает место оставленных
+                kept.remove(k)
+                decision[k] = ("drop", f, "model")
+            kept.append(f)
+            decision[f] = ("keep", f, "")
+            continue
+        winner = max(conflicts, key=lambda k: corr.loc[f, k])
+        how = "model" if strategy == "model" else (
+            "model" if strategy == "hybrid" and direct[winner] - direct[f] < auc_gap_threshold
+            else "direct")
+        decision[f] = ("drop", winner, how)
+
+    rows = []
+    for f in order:
+        action, by, how = decision[f]
+        c = float(corr.loc[f, by])
+        if action == "keep":
+            reason = ""
+        else:
+            values = (f"model_auc={model_auc(f):.4f} vs {model_auc(by):.4f}" if how == "model"
+                      else f"auc={direct[f]:.4f} vs {direct[by]:.4f}")
+            reason = (f"Удалён в паре с {by} (method={how}, |corr|={c:.3f}, {values})")
+        rows.append({"feature": f, "action": action, "reason": reason, "group": group_of[f],
+                     "kept": by, "corr_with_kept": c, "direct_auc": direct[f]})
+    return rows
 
 
 def _plot_groups(result: Result) -> go.Figure:
