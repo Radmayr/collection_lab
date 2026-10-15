@@ -24,6 +24,7 @@ from collection_lab.selection.stepwise import (
     forward_addition,
     incremental_feature_eval,
 )
+from collection_lab.selection.tree import univariate_tree_scores
 from collection_lab.selection.univariate import direct_auc, univariate_filter, univariate_scores
 
 __all__ = [
@@ -49,4 +50,5 @@ __all__ = [
     "rfe",
     "univariate_filter",
     "univariate_scores",
+    "univariate_tree_scores",
 ]

@@ -219,7 +219,7 @@ domains.summary; domains.features; domains.plot_domain("транзакции")
 | `feature_testing` | `test_features`, `test_domains`, `FeatureTest` |
 | `eda` | `overview`, `target_summary`, `plot_distribution`, `plot_target_rate_by_bins`, `target_dynamics`, `vintage`, `vintage_by_type`, `vintage_by_segment`, `maturation_transactions`, `plot_vintage`, `eda_transactions`, `add_days_since` |
 | `metrics` | `roc_auc`, `gini`, `ks`, `metrics_by_segment`, `psi`, `psi_table`, `feature_psi`, `psi_by_period`, `gain_chart`, `gain_chart_metrics`, `hosmer_lemeshow`, `information_value`, `iv_table` |
-| `selection` | `quality_filter`, `correlation_filter`, `univariate_scores`, `cumulative_importance_selection`, `drop_column_importance`, `permutation_importance`, `rfe`, `backward_elimination`, `forward_addition`, `incremental_feature_eval`, `SelectionPipeline` |
+| `selection` | `quality_filter`, `correlation_filter`, `univariate_scores`, `univariate_tree_scores`, `cumulative_importance_selection`, `drop_column_importance`, `permutation_importance`, `rfe`, `backward_elimination`, `forward_addition`, `incremental_feature_eval`, `SelectionPipeline` |
 | `modeling` | `train_model`, `compare_models`, `tune_hyperparams`, `sample_size_curve` |
 | `validation` | `plot_stab`, `metric_dynamics`, `feature_metric_dynamics`, `learning_curve`, `model_report` |
 | `tracking` | `Experiment`, `clearml.*` |
@@ -386,6 +386,7 @@ WoE / IV:
 | `correlation_filter(df, y, features, threshold, strategy, ...)` | В каждой группе коррелирующих числовых признаков оставляет один с лучшим AUC. `strategy`: `"direct"` — AUC признака как скора, `"model"` — CV AUC однофакторной модели, `"hybrid"` — модель только там, где лидеры близки |
 | `correlation_groups(X, threshold, method)` | Группы признаков, связанных цепочками `\|corr\| > threshold`; возвращает `(groups, corr)` |
 | `univariate_scores(X, y, features, n_splits, ...)` | AUC маленькой модели LightGBM на каждом признаке отдельно |
+| `univariate_tree_scores(X, y, features, max_depth, min_leaf_share, n_splits)` | Одно дерево решений на каждом признаке: ранжирование по AUC на кросс-валидации, число листьев, монотонность доли таргета; в `info["leaves"]` — интервалы каждого признака и доля таргета в них. `plot()` — AUC по признакам, `plot(feature=...)` — доля таргета по интервалам |
 | `univariate_filter(X, y, features, min_auc)` | Оставляет признаки с однофакторным AUC `>= min_auc` |
 | `direct_auc(x, y, folds)` | AUC признака как скора без модели: `max(AUC, 1 − AUC)`; возвращает `float` |
 | `cumulative_importance_selection(df, target, features, threshold, importance, ...)` | Оставляет признаки, дающие `threshold` суммарной важности, и сравнивает метрику полной и урезанной модели |

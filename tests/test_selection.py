@@ -226,3 +226,32 @@ def test_datasplit_eval_sets(binary_df):
     assert list(no_test.eval_sets()) == ["val"]           # отсутствующий test пропускается
     with pytest.raises(KeyError):
         no_test.eval_sets(["nope"])
+
+
+def test_univariate_tree_scores(binary_df):
+    from collection_lab.selection import univariate_tree_scores
+
+    df = binary_df.assign(sparse=np.where(binary_df.index % 4 == 0, 1.0, np.nan))
+    res = univariate_tree_scores(df, df["target"], ["x1", "noise", "cat", "const", "sparse"],
+                                 max_depth=2, min_leaf_share=0.1, n_splits=3, verbose=False)
+    t = res.table.set_index("feature")
+    assert t.index[0] == "x1" and t.loc["x1", "auc_mean"] > t.loc["noise", "auc_mean"]
+    assert t.loc["const", "status"] == "constant_or_all_nan"
+    assert t.loc["sparse", "status"] == "ok"           # «заполнен / пропуск» — тоже разбиение
+    assert 2 <= t.loc["x1", "n_leaves"] <= 4 and bool(t.loc["x1", "monotonic"])
+    assert np.isnan(t.loc["cat", "monotonic"])
+    assert set(res.selected) == {"x1", "noise", "cat", "sparse"}
+
+    leaves = res.info["leaves"]
+    x1 = leaves[leaves["feature"] == "x1"]
+    assert x1["n"].sum() == len(df) and x1["share"].sum() == pytest.approx(1.0)
+    assert (x1["share"] >= 0.1 * 2 / 3 - 1e-9).all()   # не мельче min_leaf_share от фолда
+    assert x1["target_rate"].is_monotonic_increasing    # x1 повышает риск
+    cat = leaves[leaves["feature"] == "cat"]
+    assert cat["target_rate"].is_monotonic_increasing   # категории — по доле таргета
+    assert isinstance(res.plot(), go.Figure)
+    assert isinstance(res.plot(feature="x1"), go.Figure)
+    with pytest.raises(ValueError):
+        res.plot(feature="const")
+    with pytest.raises(ValueError):
+        univariate_tree_scores(df, df["target"], ["x1"], min_leaf_share=0.7)
