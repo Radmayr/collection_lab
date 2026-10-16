@@ -187,3 +187,14 @@ def test_plot_stab_nulls(binary_df, capsys, tmp_path):
               plot_nulls=True, return_plotly_fig=True, save_plot=True, path_to_save=str(tmp_path),
               plots_nm=["mine_a", "mine_b"])
     assert (tmp_path / "mine_a_nulls.html").exists() and (tmp_path / "mine_b.html").exists()
+
+
+@pytest.mark.parametrize("null_share", [0.1, 0.5, 0.6, 0.9])
+def test_plot_stab_nulls_two_buckets_for_any_share(binary_df, null_share):
+    """Флаг пропуска — всегда два бакета, даже когда пропусков больше половины."""
+    df = binary_df.copy()
+    rng = np.random.default_rng(1)
+    df.loc[rng.random(len(df)) < null_share, "x1"] = np.nan
+    figs = plot_stab(df["x1"], df["target"], df["report_date"], 4, feature_nm="x1", period="Q",
+                     plot_nulls=True, return_plotly_fig=True)
+    assert {t.name for t in figs[2].data if t.name} == {"x1_nulls in [0, 0]", "x1_nulls in [1, 1]"}

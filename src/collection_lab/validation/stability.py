@@ -353,5 +353,6 @@ def _plot_null_flag(values, target, time, *, feature_nm: str, plots_nm: list[str
         return []
     # имена по умолчанию — stab_<feature_nm>_nulls_1/2; свои имена получают суффикс _nulls
     names = [f"{name}_nulls" for name in plots_nm] if plots_nm else None
+    # бакеты строго 0 и 1: квантильное правило склеивает их, если пропусков больше половины
     return plot_stab(flag, target, time, 2, feature_nm=f"{feature_nm}_nulls", plots_nm=names,
-                     return_plotly_fig=True, plot_nulls=False, **kwargs)
+                     bins_method="dense", return_plotly_fig=True, plot_nulls=False, **kwargs)
