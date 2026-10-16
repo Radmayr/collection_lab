@@ -179,6 +179,7 @@ def plot_stab(
     to_clearml: bool = False,
     ci_opacity: float = 0.5,
     iv_type: str = "IV_empirical",
+    plot_nulls: bool = False,
 ) -> list[go.Figure] | None:
     """Разбивает признак на бакеты и строит во времени WoE, доли бакетов, badrate и IV.
 
@@ -211,8 +212,16 @@ def plot_stab(
         масштаб оси PSI.
     iv_type : {"IV_empirical", "IV_auc"}
         IV по бакетам или через ROC AUC.
+    plot_nulls : bool
+        Дополнительно построить те же графики для флага пропуска ``<feature_nm>_nulls``
+        (1 — пропуск, 0 — заполнено; два бакета): видно, стабильна ли доля пропусков и как
+        отличается таргет у заполненных и пустых. Остальные параметры — те же, что у основного
+        графика, ``transform`` и ``null_bucket`` к флагу не применяются. Если пропусков нет,
+        графики флага не строятся (с сообщением). Не путать с ``null_bucket``: тот добавляет
+        пропуски отдельным бакетом в основной график.
     return_plotly_fig : bool
-        Вернуть список из двух ``go.Figure`` вместо показа.
+        Вернуть список ``go.Figure`` вместо показа: две фигуры признака и, при
+        ``plot_nulls=True``, ещё две — флага пропуска.
 
     Returns
     -------
@@ -320,8 +329,28 @@ def plot_stab(
 
         for fig, name in zip(figs, names, strict=False):
             report_figure(fig, title=name)
+    if plot_nulls:
+        figs += _plot_null_flag(
+            values, target, time, feature_nm=feature_nm, target_nm=target_nm, period=period,
+            avoid_null_mode=avoid_null_mode, quantiles=quantiles, binary_target=binary_target,
+            interactive_plot=interactive_plot, line_dt=line_dt, metric_ylim_zero=metric_ylim_zero,
+            save_plot=save_plot, path_to_save=path_to_save, plots_nm=names, add_psi=add_psi,
+            size_psi=size_psi, to_clearml=to_clearml, ci_opacity=ci_opacity, iv_type=iv_type)
     if return_plotly_fig:
         return figs
     for fig in figs:
         fig.show(config=None if interactive_plot else {"staticPlot": True})
     return None
+
+
+def _plot_null_flag(values, target, time, *, feature_nm: str, plots_nm: list[str],
+                    **kwargs: Any) -> list[go.Figure]:
+    """Графики стабильности для флага пропуска признака (см. ``plot_nulls`` в :func:`plot_stab`)."""
+    flag = pd.isna(pd.Series(np.asarray(values, dtype=object))).astype(int).to_numpy()
+    if flag.min() == flag.max():
+        print(f"{feature_nm}: " + ("пропусков нет" if flag.max() == 0 else "все значения пустые")
+              + " — графики по пропускам не строятся.")
+        return []
+    names = [f"{name}_nulls" for name in plots_nm]
+    return plot_stab(flag, target, time, 2, feature_nm=f"{feature_nm}_nulls", plots_nm=names,
+                     return_plotly_fig=True, plot_nulls=False, **kwargs)

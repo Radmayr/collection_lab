@@ -448,7 +448,7 @@ WoE / IV:
 
 | Функция | Что делает | Возвращает |
 |---|---|---|
-| `plot_stab(values, target, time, n_buckets, feature_nm, period, add_psi, ...)` | Стабильность признака во времени: WoE по бакетам, доли бакетов, badrate и IV по периодам (две фигуры по две панели); `add_psi=True` — PSI между соседними периодами | `None` или `[fig1, fig2]` при `return_plotly_fig=True` |
+| `plot_stab(values, target, time, n_buckets, feature_nm, period, add_psi, ...)` | Стабильность признака во времени: WoE по бакетам, доли бакетов, badrate и IV по периодам (две фигуры по две панели); `add_psi=True` — PSI между соседними периодами; `plot_nulls=True` — ещё две фигуры для флага пропуска `<feature_nm>_nulls` (доля пропусков и таргет у пустых и заполненных во времени) | `None` или список фигур при `return_plotly_fig=True` |
 | `stability_table(values, target, time, n_buckets, ...)` | Расчётная часть `plot_stab` | `(buckets, periods)` |
 | `metric_dynamics(df, target, score, date_col, segment, freq, metric)` | Метрика скора по периодам и сегментам | `Result` |
 | `feature_metric_dynamics(train, data, features, target, date_col, freq)` | Однофакторная метрика каждого признака по периодам: модель обучается на `train`, оценивается в периодах `data` | `Result` |

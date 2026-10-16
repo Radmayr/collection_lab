@@ -167,3 +167,18 @@ def test_model_report(binary_df, tmp_path):
 def test_prob_to_logit_roundtrip():
     p = np.array([0.1, 0.5, 0.9])
     assert np.allclose(expit(prob_to_logit(p)), p)
+
+
+def test_plot_stab_nulls(binary_df, capsys, tmp_path):
+    df = binary_df
+    figs = plot_stab(df["x2"], df["target"], df["report_date"], 4, feature_nm="x2", period="Q",
+                     plot_nulls=True, return_plotly_fig=True, save_plot=True,
+                     path_to_save=str(tmp_path))
+    assert len(figs) == 4                                   # 2 — признак, 2 — флаг пропуска
+    flag_names = {t.name for t in figs[2].data if t.name}
+    assert flag_names == {"x2_nulls in [0, 0]", "x2_nulls in [1, 1]"}
+    assert (tmp_path / "stab_x2_nulls_1.html").exists() and (tmp_path / "stab_x2_1.html").exists()
+
+    figs = plot_stab(df["x1"], df["target"], df["report_date"], 4, feature_nm="x1", period="Q",
+                     plot_nulls=True, return_plotly_fig=True)
+    assert len(figs) == 2 and "пропусков нет" in capsys.readouterr().out
