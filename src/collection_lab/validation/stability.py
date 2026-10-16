@@ -334,7 +334,7 @@ def plot_stab(
             values, target, time, feature_nm=feature_nm, target_nm=target_nm, period=period,
             avoid_null_mode=avoid_null_mode, quantiles=quantiles, binary_target=binary_target,
             interactive_plot=interactive_plot, line_dt=line_dt, metric_ylim_zero=metric_ylim_zero,
-            save_plot=save_plot, path_to_save=path_to_save, plots_nm=names, add_psi=add_psi,
+            save_plot=save_plot, path_to_save=path_to_save, plots_nm=plots_nm, add_psi=add_psi,
             size_psi=size_psi, to_clearml=to_clearml, ci_opacity=ci_opacity, iv_type=iv_type)
     if return_plotly_fig:
         return figs
@@ -343,7 +343,7 @@ def plot_stab(
     return None
 
 
-def _plot_null_flag(values, target, time, *, feature_nm: str, plots_nm: list[str],
+def _plot_null_flag(values, target, time, *, feature_nm: str, plots_nm: list[str] | None,
                     **kwargs: Any) -> list[go.Figure]:
     """Графики стабильности для флага пропуска признака (см. ``plot_nulls`` в :func:`plot_stab`)."""
     flag = pd.isna(pd.Series(np.asarray(values, dtype=object))).astype(int).to_numpy()
@@ -351,6 +351,7 @@ def _plot_null_flag(values, target, time, *, feature_nm: str, plots_nm: list[str
         print(f"{feature_nm}: " + ("пропусков нет" if flag.max() == 0 else "все значения пустые")
               + " — графики по пропускам не строятся.")
         return []
-    names = [f"{name}_nulls" for name in plots_nm]
+    # имена по умолчанию — stab_<feature_nm>_nulls_1/2; свои имена получают суффикс _nulls
+    names = [f"{name}_nulls" for name in plots_nm] if plots_nm else None
     return plot_stab(flag, target, time, 2, feature_nm=f"{feature_nm}_nulls", plots_nm=names,
                      return_plotly_fig=True, plot_nulls=False, **kwargs)

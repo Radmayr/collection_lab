@@ -182,3 +182,8 @@ def test_plot_stab_nulls(binary_df, capsys, tmp_path):
     figs = plot_stab(df["x1"], df["target"], df["report_date"], 4, feature_nm="x1", period="Q",
                      plot_nulls=True, return_plotly_fig=True)
     assert len(figs) == 2 and "пропусков нет" in capsys.readouterr().out
+
+    plot_stab(df["x2"], df["target"], df["report_date"], 4, feature_nm="x2", period="Q",
+              plot_nulls=True, return_plotly_fig=True, save_plot=True, path_to_save=str(tmp_path),
+              plots_nm=["mine_a", "mine_b"])
+    assert (tmp_path / "mine_a_nulls.html").exists() and (tmp_path / "mine_b.html").exists()
